@@ -8,9 +8,9 @@ Employee Budget Allocation Platform — a Workday-like enterprise application fo
 
 - **React SPA** (`apps/web`) — Single-page application frontend
 - **NestJS BFF** (`apps/bff`) — Backend-for-frontend, the ONLY public entry point
-- **.NET 8 API** (`apps/api`) — Internal API, never exposed publicly
+- **.NET 9 API** (`apps/api`) — Internal API, never exposed publicly
 
-**Infrastructure:** PostgreSQL 16 (with `ltree` extension for hierarchy), ElastiCache Redis for caching.
+**Infrastructure:** PostgreSQL 17 (with `ltree` extension for hierarchy), ElastiCache Redis 7.4 (Valkey compatible) for caching.
 
 **Auth:** Auth0 SSO with 3-layer RBAC enforcement (NestJS guard → .NET policy → PostgreSQL RLS).
 
@@ -30,13 +30,13 @@ Employee Budget Allocation Platform — a Workday-like enterprise application fo
 - Strict TypeScript (`strict: true`)
 - Use `interface` for object shapes, `type` for unions/intersections
 - NestJS: use decorators for validation (`class-validator`), guards for auth
-- React: functional components only, React Query for data fetching
+- React 19: functional components only, TanStack Query v5 for data fetching
 - Import order: node modules → external packages → internal modules → relative imports
 - File naming: kebab-case for files, PascalCase for components/classes
 
 ### C# (.NET)
 
-- .NET 8, C# 12
+- .NET 9, C# 13
 - Use MediatR for CQRS command/query dispatch
 - FluentValidation for request validation
 - Entity Framework Core for data access
@@ -90,6 +90,41 @@ apps/api/
     Infrastructure/  # EF Core, repositories, SNS publisher, Redis
     Api/             # Controllers, middleware, health checks
 ```
+
+## Environments
+
+The platform uses a **3-environment promotion strategy** with separate AWS accounts:
+
+| Environment | Purpose | Branch Trigger | AWS Account | URL |
+|-------------|---------|---------------|-------------|-----|
+| **test** | Dev testing, integration, QA | PR merges to `develop` | Shared dev account | `test.budgetalloc.example.com` |
+| **beta** | Pre-production, UAT, canary validation | PR merges to `release/*` or promotion from test | Separate beta account | `beta.budgetalloc.example.com` |
+| **prod** | Production | PR merges to `main` or promotion from beta | Dedicated prod account (isolated) | `app.budgetalloc.example.com` |
+
+**Git branching:**
+- `develop` → deploys to **test** automatically
+- `release/*` → deploys to **beta** automatically
+- `main` → deploys to **prod** (requires manual approval gate)
+- Feature branches → PR to `develop` (CI only, no deploy)
+
+**Key differences per environment:**
+
+| Config | test | beta | prod |
+|--------|------|------|------|
+| EKS nodes | 2 (single AZ OK) | 3 (multi-AZ) | 6+ (multi-AZ, 3 AZs) |
+| RDS | Single, db.t4g.medium | Multi-AZ, db.r6g.large | Multi-AZ, db.r6g.xlarge + read replica |
+| Redis | 1 node, cache.t4g.small | 2-node cluster | 3-node cluster, Multi-AZ |
+| Argo Rollouts | Disabled (direct deploy) | Canary 50%→100% | Canary 20%→40%→80%→100% with analysis |
+| Split.io | Development env | Staging env | Production env |
+| Auth0 | Dev tenant | Staging tenant | Production tenant |
+| Seed data | 5000+ employees (seeded) | 1000 employees (subset) | Real data only |
+| Log level | DEBUG | INFO | WARN |
+| Feature flags | All ON (for testing) | Selective (UAT) | Controlled rollout |
+
+**Docker image tagging:**
+- test: `{ecr}/eba-bff:test-{sha}`, `{ecr}/eba-bff:test-latest`
+- beta: `{ecr}/eba-bff:beta-{sha}`, `{ecr}/eba-bff:beta-latest`
+- prod: `{ecr}/eba-bff:prod-{sha}`, `{ecr}/eba-bff:prod-latest`, `{ecr}/eba-bff:v{semver}`
 
 ## Common Commands
 

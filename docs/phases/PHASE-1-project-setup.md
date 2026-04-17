@@ -9,7 +9,7 @@ Establish a fully functional monorepo with all three services scaffolded, local 
 - [ ] `make up` starts all services with hot-reload
 - [ ] `make lint` runs ESLint/Prettier across TS projects and `dotnet format` on .NET
 - [ ] `make test` runs placeholder tests in all 3 services
-- [ ] PostgreSQL 16 and Redis 7 accessible from all services locally
+- [ ] PostgreSQL 17 and Redis 7.4 accessible from all services locally
 - [ ] Pre-commit hooks block commits with lint errors
 - [ ] CI smoke job passes on a fresh clone
 
@@ -24,14 +24,14 @@ graph TB
     subgraph Monorepo["Nx Monorepo"]
         SPA["apps/web<br/>React + Vite + TS"]
         BFF["apps/bff<br/>NestJS"]
-        API["apps/api<br/>.NET 8 Web API"]
+        API["apps/api<br/>.NET 9 Web API"]
         LibShared["libs/shared-types<br/>TS interfaces"]
         LibContracts["libs/contracts<br/>Pact contracts"]
     end
 
     subgraph DockerCompose["Docker Compose (local dev)"]
-        PG["PostgreSQL 16<br/>:5432"]
-        Redis["Redis 7<br/>:6379"]
+        PG["PostgreSQL 17<br/>:5432"]
+        Redis["Redis 7.4<br/>:6379"]
         LS["LocalStack<br/>:4566"]
     end
 
@@ -60,15 +60,23 @@ employee_budget_allocation/
 ├── apps/
 │   ├── web/                    # React SPA (Vite + TS)
 │   ├── bff/                    # NestJS BFF
-│   └── api/                    # .NET 8 Web API
+│   └── api/                    # .NET 9 Web API
 ├── libs/
 │   ├── shared-types/           # Shared TS interfaces (DTOs, enums)
 │   └── contracts/              # Pact contract files
 ├── infra/
 │   └── terraform/              # Phase 8
+│       ├── modules/            # Reusable modules (vpc, eks, rds, redis, etc.)
+│       └── environments/
+│           ├── test/           # develop → test.budgetalloc.example.com
+│           ├── beta/           # release/* → beta.budgetalloc.example.com
+│           └── prod/           # main → app.budgetalloc.example.com
 ├── k8s/
 │   ├── base/
 │   └── overlays/
+│       ├── test/               # Direct deploy, reduced replicas
+│       ├── beta/               # Canary 50%→100%
+│       └── prod/               # Canary 20%→40%→80%→100% + analysis
 ├── docker/
 │   ├── docker-compose.yml
 │   ├── docker-compose.override.yml
@@ -80,6 +88,11 @@ employee_budget_allocation/
 │   └── wait-for-it.sh
 ├── .github/
 │   └── workflows/
+│       ├── ci.yml              # PR checks (lint, test, build)
+│       ├── deploy-test.yml     # develop → test (direct deploy)
+│       ├── deploy-beta.yml     # release/* → beta (canary 50%→100%)
+│       ├── deploy-prod.yml     # main → prod (canary + approval gate)
+│       └── db-migrate.yml      # Manual migration (test/beta/prod)
 ├── .husky/
 │   ├── pre-commit
 │   └── commit-msg
@@ -171,11 +184,11 @@ async function bootstrap() {
 bootstrap();
 ```
 
-### 1.4 — Scaffold .NET 8 API
+### 1.4 — Scaffold .NET 9 API
 
 ```bash
 cd apps/
-dotnet new webapi -n Api -o api --framework net8.0
+dotnet new webapi -n Api -o api --framework net9.0
 dotnet new sln -n EmployeeBudgetAllocation -o api
 ```
 
@@ -242,7 +255,7 @@ version: "3.9"
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     ports:
       - "5432:5432"
     environment:
@@ -259,7 +272,7 @@ services:
       retries: 5
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     ports:
       - "6379:6379"
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru

@@ -42,8 +42,8 @@ An employee hierarchy and budget allocation platform serving 5,000+ employees. C
 |-------|-----------|-----------|
 | Frontend | React (Vite + TypeScript) | Component-driven SPA, strong ecosystem |
 | Middleware / BFF | NestJS (TypeScript) | Auth0 guard, RBAC filtering, aggregation |
-| Backend API | .NET 8 (C#) | Domain logic, CQRS handlers, high performance |
-| Database | PostgreSQL 16 | Relational hierarchy, ltree extension, RLS |
+| Backend API | .NET 9 (C# 13) | Domain logic, CQRS handlers, high performance |
+| Database | PostgreSQL 17 | Relational hierarchy, ltree extension, RLS |
 | Cache | ElastiCache (Redis) | Tree cache, session store, RBAC visibility sets |
 | Auth / SSO | Auth0 | OIDC/PKCE, role management, MFA |
 | Feature Flags | Split.io | Canary gating, kill switches, A/B |
@@ -151,10 +151,14 @@ graph TB
 
 | Workflow | Trigger | Steps |
 |----------|---------|-------|
-| `ci.yml` | PR to `main` | lint, unit test, integration test, SonarQube scan, Snyk security scan |
-| `cd-deploy.yml` | merge to `main` | build Docker images, push to ECR, update Argo Rollout image tag |
-| `infra.yml` | changes to `terraform/` | `terraform plan` on PR, `terraform apply` on merge |
-| `db-migrate.yml` | manual dispatch | run EF Core migrations against RDS |
+| `ci.yml` | Any PR | lint, unit test, integration test, SonarCloud scan, Snyk security scan |
+| `deploy-test.yml` | merge to `develop` | build Docker images, push to ECR, deploy to test EKS (direct rollout) |
+| `deploy-beta.yml` | merge to `release/*` or manual dispatch ("promote from test") | build Docker images, push to ECR, deploy to beta EKS (canary 50→100) |
+| `deploy-prod.yml` | merge to `main` or manual dispatch ("promote from beta") | build Docker images, push to ECR, deploy to prod EKS (canary 20→40→80→100 + analysis), requires manual approval |
+| `infra-test.yml` | changes to `infra/terraform/environments/test/` | `terraform plan` on PR, `terraform apply` on merge |
+| `infra-beta.yml` | changes to `infra/terraform/environments/beta/` | `terraform plan` on PR, `terraform apply` on merge |
+| `infra-prod.yml` | changes to `infra/terraform/environments/prod/` | `terraform plan` on PR, `terraform apply` on merge (requires approval) |
+| `db-migrate.yml` | manual dispatch (select environment: test, beta, or prod) | run EF Core migrations against selected environment's RDS |
 
 ### Argo Rollouts + Split.io Integration
 
@@ -407,7 +411,7 @@ All APIs use URI-path versioning (`/v1/`). The BFF and backend API are versioned
 ```mermaid
 flowchart LR
     subgraph "React SPA"
-        A[React Query Client]
+        A[TanStack Query Client]
     end
     subgraph "NestJS BFF — /bff/v1/"
         B[BFF Controllers]
@@ -1316,8 +1320,8 @@ flowchart LR
     end
 
     subgraph EKS["EKS Cluster"]
-        B[NestJS BFF] -->|"Same headers forwarded"| C[.NET 8 API]
-        C -->|"SQL comment: /* corrId=uuid */"| D[(PostgreSQL 16)]
+        B[NestJS BFF] -->|"Same headers forwarded"| C[.NET 9 API]
+        C -->|"SQL comment: /* corrId=uuid */"| D[(PostgreSQL 17)]
         C -->|"MessageAttributes: corrId"| E[SNS/SQS]
     end
 
@@ -1370,7 +1374,7 @@ All services emit **JSON-structured logs** to stdout, collected by Fluent Bit Da
 |---------|---------|-----------------|--------|
 | React SPA | `pino` (browser build) | CloudWatch RUM / console | Client errors, performance entries |
 | NestJS BFF | `nestjs-pino` | stdout → Fluent Bit → CloudWatch | Request/response logging (body redacted), Auth0 token claims |
-| .NET 8 API | `Serilog` + `Serilog.Formatting.Compact` | stdout → Fluent Bit → CloudWatch | CQRS handler names, EF Core query tags |
+| .NET 9 API | `Serilog` + `Serilog.Formatting.Compact` | stdout → Fluent Bit → CloudWatch | CQRS handler names, EF Core 9 query tags |
 | PostgreSQL | `pgAudit` extension | CloudWatch via RDS log export | DDL/DML audit, slow query log (>100ms) |
 
 **Sensitive Data Handling:**
@@ -1388,7 +1392,7 @@ All services emit **JSON-structured logs** to stdout, collected by Fluent Bit Da
 |-------|-----|----------------------|--------------|
 | React SPA | `@opentelemetry/sdk-trace-web` | `fetch`, `XMLHttpRequest` | Route transitions, Auth0 redirect |
 | NestJS BFF | `@opentelemetry/sdk-node` | Express, HTTP, Redis, pg | RBAC evaluation, cache operations |
-| .NET 8 API | `OpenTelemetry.Extensions.Hosting` | ASP.NET Core, EF Core, HttpClient | CQRS handlers, ltree queries, materialized view refresh |
+| .NET 9 API | `OpenTelemetry.Extensions.Hosting` | ASP.NET Core, EF Core 9, HttpClient | CQRS handlers, ltree queries, materialized view refresh |
 
 **Trace context propagation chain:**
 
@@ -1490,7 +1494,7 @@ flowchart TB
     subgraph Application["Application Tier"]
         SPA[React SPA]
         BFF[NestJS BFF Pod]
-        API[.NET 8 API Pod]
+        API[.NET 9 API Pod]
     end
 
     subgraph Sidecars["Per-Pod"]
@@ -1577,7 +1581,7 @@ graph TB
 |---------|-----------|--------|----------|
 | React SPA | Vitest + React Testing Library | 80% lines | CI gate |
 | NestJS BFF | Jest | 85% lines | CI gate |
-| .NET 8 API | xUnit + FluentAssertions + NSubstitute | 90% lines | CI gate |
+| .NET 9 API | xUnit + FluentAssertions + NSubstitute | 90% lines | CI gate |
 
 **What to Unit Test — .NET API (highest value):**
 
@@ -1666,7 +1670,7 @@ flowchart LR
         PACT -->|"Publish"| PB[(Pact Broker)]
     end
 
-    subgraph Provider[".NET 8 API (Provider)"]
+    subgraph Provider[".NET 9 API (Provider)"]
         PB -->|"Fetch & Verify"| PV[Provider Verification]
         PV -->|"Results"| PB
     end
@@ -1804,18 +1808,21 @@ infra/
         variables.tf
         outputs.tf
     environments/
-      dev/
-        main.tf             # Module composition with dev-sized params
+      test/
+        main.tf             # Module composition with test sizing
+        variables.tf
         terraform.tfvars
-        backend.tf           # S3 backend config for dev state
-      staging/
-        main.tf
+        backend.tf           # S3 state: env-test/terraform.tfstate
+      beta/
+        main.tf             # Module composition with beta sizing
+        variables.tf
         terraform.tfvars
-        backend.tf
+        backend.tf           # S3 state: env-beta/terraform.tfstate
       prod/
-        main.tf
+        main.tf             # Module composition with prod sizing
+        variables.tf
         terraform.tfvars
-        backend.tf
+        backend.tf           # S3 state: env-prod/terraform.tfstate
     global/
       state-bootstrap/      # S3 bucket + DynamoDB for TF state (chicken-and-egg)
         main.tf
@@ -1858,23 +1865,33 @@ flowchart TB
 
 ### 13.3 Environment Promotion Strategy
 
-Environments use **separate state files** (not workspaces) for full isolation. Each environment directory composes the same modules with different parameters.
+Environments use **separate state files** (not workspaces) for full isolation. Each environment directory composes the same modules with different parameters. Each environment runs in its own AWS account.
 
-| Parameter | Dev | Staging | Prod |
-|-----------|-----|---------|------|
-| EKS node group size | 2 (t3.medium) | 3 (t3.large) | 6 (m5.xlarge), 3 AZs |
-| RDS instance | db.t3.medium, single-AZ | db.r6g.large, multi-AZ | db.r6g.xlarge, multi-AZ |
-| Redis | cache.t3.micro, 1 node | cache.r6g.large, 2 nodes | cache.r6g.xlarge, 3 nodes, multi-AZ |
+| Parameter | test | beta | prod |
+|-----------|------|------|------|
+| AWS Account | Shared dev account | Separate beta account | Dedicated prod account (isolated) |
+| Branch trigger | Merge to `develop` | Merge to `release/*` | Merge to `main` (manual approval) |
+| URL | test.budgetalloc.example.com | beta.budgetalloc.example.com | app.budgetalloc.example.com |
+| EKS node group size | 2 (single AZ OK) | 3 (multi-AZ) | 6+ (multi-AZ, 3 AZs) |
+| RDS instance | db.t4g.medium, single-AZ | db.r6g.large, multi-AZ | db.r6g.xlarge, multi-AZ + read replica |
+| Redis | cache.t4g.small, 1 node | 2-node cluster | 3-node cluster, multi-AZ |
 | RDS Proxy | Disabled | Enabled | Enabled, max 200 connections |
+| Argo Rollouts | Disabled (direct deploy) | Canary 50%→100% | Canary 20%→40%→80%→100% with analysis |
+| Split.io | Development environment | Staging environment | Production environment |
+| Auth0 | Dev tenant | Staging tenant | Production tenant |
+| Seed data | 5000+ employees (seeded) | 1000 employees (subset) | Real data only |
+| Log level | DEBUG | INFO | WARN |
+| Feature flags | All ON (for testing) | Selective (UAT validation) | Controlled rollout |
 | SNS/SQS DLQ | Alarm disabled | Alarm enabled | Alarm + auto-redrive |
 | Backups | 1-day retention | 3-day retention | 7-day retention, cross-region |
+| GitHub Environment | No protection rules | 5-minute wait timer | Manual reviewers (2 approvals) |
 
 **Promotion Flow:**
 
 ```mermaid
 flowchart LR
-    DEV[Dev<br/>Auto-apply on merge] -->|"PR + plan review"| STAGING[Staging<br/>Manual approve]
-    STAGING -->|"PR + plan review<br/>+ change window"| PROD[Prod<br/>Manual approve<br/>+ rollback plan]
+    DEV[test<br/>Auto-deploy on<br/>merge to develop] -->|"PR to release/*<br/>+ plan review"| STAGING[beta<br/>5-min wait timer]
+    STAGING -->|"PR to main<br/>+ plan review<br/>+ change window"| PROD[prod<br/>Manual approve<br/>(2 reviewers)<br/>+ rollback plan]
 
     subgraph CI["GitHub Actions"]
         PLAN[terraform plan] --> COMMENT[PR comment with diff]
@@ -2080,6 +2097,11 @@ flowchart LR
 
 ### 15.1 Multi-AZ Architecture
 
+The diagram below shows the **prod** environment topology. Test and beta environments use reduced sizing:
+- **test**: 2 EKS nodes (single AZ OK), single-AZ RDS (db.t4g.medium), 1 Redis node (cache.t4g.small)
+- **beta**: 3 EKS nodes (multi-AZ), multi-AZ RDS (db.r6g.large), 2-node Redis cluster
+- **prod**: 6+ EKS nodes (3 AZs), multi-AZ RDS (db.r6g.xlarge) + read replica, 3-node Redis cluster
+
 ```mermaid
 flowchart TB
     subgraph Region["us-east-1"]
@@ -2087,7 +2109,7 @@ flowchart TB
 
         subgraph AZ1["Availability Zone 1 (us-east-1a)"]
             EKS1[EKS Node Group<br/>2 nodes]
-            RDS_PRIMARY[(RDS Primary<br/>PostgreSQL 16)]
+            RDS_PRIMARY[(RDS Primary<br/>PostgreSQL 17)]
             REDIS1[ElastiCache<br/>Primary Node]
         end
 
@@ -2218,12 +2240,12 @@ flowchart TB
         subgraph Services["Application Services (hot-reload)"]
             SPA["React SPA<br/>Vite dev server<br/>:5173<br/>Volume mount: ./apps/web/src"]
             BFF["NestJS BFF<br/>ts-node-dev --respawn<br/>:3000<br/>Volume mount: ./apps/bff/src"]
-            DOTNET[".NET 8 API<br/>dotnet watch<br/>:8080<br/>Volume mount: ./apps/api"]
+            DOTNET[".NET 9 API<br/>dotnet watch<br/>:8080<br/>Volume mount: ./apps/api"]
         end
 
         subgraph Infra["Infrastructure Services"]
-            PG[(PostgreSQL 16<br/>:5432<br/>Init: seed.sql)]
-            REDIS_LOCAL[(Redis 7<br/>:6379)]
+            PG[(PostgreSQL 17<br/>:5432<br/>Init: seed.sql)]
+            REDIS_LOCAL[(Redis 7.4<br/>:6379)]
             LOCALSTACK[LocalStack<br/>:4566<br/>SNS, SQS, S3,<br/>Secrets Manager]
             WIREMOCK[WireMock<br/>:8081<br/>Auth0 JWKS mock]
         end
@@ -2247,7 +2269,7 @@ flowchart TB
 |---------|------|-----------|-------------|
 | React SPA | Vite HMR | Volume mount `./apps/web/src`, Vite detects changes | < 100ms |
 | NestJS BFF | `ts-node-dev --respawn` | Volume mount `./apps/bff/src`, process restart on change | < 2s |
-| .NET 8 API | `dotnet watch` | Volume mount `./apps/api`, incremental rebuild | < 3s |
+| .NET 9 API | `dotnet watch` | Volume mount `./apps/api`, incremental rebuild | < 3s |
 
 ### 16.3 Seed Data CLI
 
@@ -2364,7 +2386,7 @@ employee-budget-allocation/
 │   │   ├── src/
 │   │   ├── package.json
 │   │   └── nest-cli.json
-│   └── api/                    # .NET 8 API
+│   └── api/                    # .NET 9 API
 │       ├── src/
 │       │   ├── Api/            # Host, controllers, middleware
 │       │   ├── Application/    # CQRS handlers, DTOs, validators
@@ -2383,8 +2405,8 @@ employee-budget-allocation/
 ├── k8s/
 │   ├── base/                   # Kustomize base manifests
 │   ├── overlays/
-│   │   ├── dev/
-│   │   ├── staging/
+│   │   ├── test/
+│   │   ├── beta/
 │   │   └── prod/
 │   └── argo-rollouts/          # Rollout + AnalysisTemplate manifests
 ├── k6/                         # Load test scripts

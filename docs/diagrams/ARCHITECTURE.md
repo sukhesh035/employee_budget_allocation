@@ -40,17 +40,17 @@ flowchart TB
     USER["Browser"]
 
     subgraph Frontend
-        SPA["React SPA\n(TypeScript, React Query)\nServed from S3/CloudFront"]
+        SPA["React SPA\n(TypeScript, TanStack Query v5)\nServed from S3/CloudFront"]
     end
 
     subgraph Backend ["Backend (EKS)"]
         BFF["NestJS BFF\n(Auth guard, RBAC guard,\ncircuit breaker, HMAC signing)"]
-        API[".NET 8 API\n(MediatR CQRS,\nHMAC verify, domain events)"]
+        API[".NET 9 API\n(MediatR 12 CQRS,\nHMAC verify, domain events)"]
     end
 
     subgraph Data
-        PG["PostgreSQL 16\n(ltree, RLS, outbox table,\nmaterialized views)"]
-        REDIS["ElastiCache Redis\n(Cache-aside, stale fallback)"]
+        PG["PostgreSQL 17\n(ltree, RLS, outbox table,\nmaterialized views)"]
+        REDIS["ElastiCache Redis 7.4\n(Cache-aside, stale fallback)"]
     end
 
     subgraph Async
@@ -96,8 +96,8 @@ flowchart TB
                 NEST_POD["NestJS BFF Pods\n(HPA, 2-6 replicas)"]
                 DOTNET_POD[".NET API Pods\n(HPA, 2-6 replicas)"]
             end
-            RDS_PRI["RDS PostgreSQL 16\n(Primary, AZ-1)"]
-            RDS_REP["RDS PostgreSQL 16\n(Read Replica, AZ-2)"]
+            RDS_PRI["RDS PostgreSQL 17\n(Primary, AZ-1)"]
+            RDS_REP["RDS PostgreSQL 17\n(Read Replica, AZ-2)"]
             EC_PRI["ElastiCache Redis\n(Primary, AZ-1)"]
             EC_REP["ElastiCache Redis\n(Replica, AZ-2)"]
         end
@@ -371,7 +371,7 @@ flowchart LR
 
 ## 7. CI/CD Pipeline Diagram
 
-PRs trigger CI checks. Merges to `main` trigger the CD pipeline with Argo Rollouts for canary deployments with automated analysis gates.
+PRs trigger CI checks. Merges to `develop`, `release/*`, or `main` trigger environment-specific CD pipelines with progressively stricter deployment strategies.
 
 ```mermaid
 flowchart LR
@@ -385,43 +385,42 @@ flowchart LR
         COV["Coverage Check\n(80% biz / 60% overall)"]
     end
 
-    subgraph CD ["CD (GitHub Actions + Argo)"]
-        MERGE["Merge to main"]
-        BUILD["Build Docker images"]
-        PUSH["Push to ECR"]
-        UPDATE["Update Argo manifests"]
-        CANARY["Argo Rollouts"]
+    subgraph CD_TEST ["deploy-test.yml"]
+        MERGE_DEV["Merge to develop"]
+        BUILD_T["Build Docker images"]
+        PUSH_T["Push to ECR\n(test-{sha})"]
+        DEPLOY_T["Deploy to test EKS\n(direct rollout)"]
     end
 
-    subgraph Canary ["Canary Stages"]
-        C20["20% traffic"]
-        A1["Analysis gate\n(error rate, latency)"]
-        C40["40% traffic"]
-        A2["Analysis gate"]
-        C80["80% traffic"]
-        A3["Analysis gate"]
-        C100["100% traffic\n(Promote)"]
+    subgraph CD_BETA ["deploy-beta.yml"]
+        MERGE_REL["Merge to release/*"]
+        BUILD_B["Build Docker images"]
+        PUSH_B["Push to ECR\n(beta-{sha})"]
+        CANARY_B["Argo Canary\n50%→100%"]
+    end
+
+    subgraph CD_PROD ["deploy-prod.yml"]
+        MERGE_MAIN["Merge to main"]
+        APPROVE["Manual Approval\n(2 reviewers)"]
+        BUILD_P["Build Docker images"]
+        PUSH_P["Push to ECR\n(prod-{sha})"]
+        CANARY_P["Argo Canary\n20%→40%→80%→100%\n+ analysis gates"]
         ROLLBACK["Auto-rollback"]
     end
 
     PR --> LINT --> TEST_UNIT --> TEST_INT --> TEST_CONTRACT --> SCAN --> COV
-    COV -->|Pass| MERGE
-    MERGE --> BUILD --> PUSH --> UPDATE --> CANARY
 
-    CANARY --> C20 --> A1
-    A1 -->|Pass| C40 --> A2
-    A2 -->|Pass| C80 --> A3
-    A3 -->|Pass| C100
-    A1 -->|Fail| ROLLBACK
-    A2 -->|Fail| ROLLBACK
-    A3 -->|Fail| ROLLBACK
+    MERGE_DEV --> BUILD_T --> PUSH_T --> DEPLOY_T
+    MERGE_REL --> BUILD_B --> PUSH_B --> CANARY_B
+    MERGE_MAIN --> APPROVE --> BUILD_P --> PUSH_P --> CANARY_P
+    CANARY_P -->|Fail| ROLLBACK
 ```
 
 ---
 
 ## 8. Deployment Topology
 
-Multi-AZ EKS deployment for high availability. Database and cache replicas in separate AZs for failover.
+Sizing varies by environment. The diagram below shows the **prod** topology (3 AZs, read replica, multi-AZ Redis). **test** uses a single AZ with 2 EKS nodes; **beta** uses 2 AZs with 3 nodes. See CLAUDE.md for the full per-environment config comparison.
 
 ```mermaid
 flowchart TB
@@ -430,8 +429,8 @@ flowchart TB
     subgraph AZ1 ["Availability Zone 1"]
         NEST1["NestJS BFF\nPod x2"]
         DOTNET1[".NET API\nPod x2"]
-        RDS_P["RDS PostgreSQL\n(PRIMARY)"]
-        EC_P["ElastiCache Redis\n(PRIMARY)"]
+        RDS_P["RDS PostgreSQL\n(PRIMARY)\ndb.r6g.xlarge"]
+        EC_P["ElastiCache Redis\n(PRIMARY)\n3-node cluster"]
     end
 
     subgraph AZ2 ["Availability Zone 2"]
@@ -464,6 +463,31 @@ flowchart TB
 
     RDS_P -.->|Async replication| RDS_R
     EC_P -.->|Async replication| EC_R
+```
+
+---
+
+## 8b. Environment Promotion Flow
+
+Code flows from feature branches through three environments with progressively stricter gates before reaching production.
+
+```mermaid
+flowchart LR
+    FB["Feature Branch"]
+    DEV_BR["develop branch"]
+    REL_BR["release/* branch"]
+    MAIN_BR["main branch"]
+
+    TEST_ENV["test env\n(direct deploy)"]
+    BETA_ENV["beta env\n(canary 50%→100%)"]
+    PROD_ENV["prod env\n(canary 20%→40%→80%→100%\n+ analysis gates)"]
+
+    FB -->|PR + CI checks| DEV_BR
+    DEV_BR -->|auto-deploy| TEST_ENV
+    DEV_BR -->|cut release branch| REL_BR
+    REL_BR -->|auto-deploy| BETA_ENV
+    REL_BR -->|PR to main| MAIN_BR
+    MAIN_BR -->|manual approval\n(2 reviewers)| PROD_ENV
 ```
 
 ---

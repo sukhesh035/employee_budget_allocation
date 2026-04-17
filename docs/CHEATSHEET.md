@@ -12,8 +12,8 @@ Workday-like app where managers see their team's total compensation as an org tr
 |-------|------|------|
 | Frontend | React SPA (Vite + TS) | Tree visualization, dashboards |
 | Gateway | NestJS BFF | Auth, RBAC filter, aggregation, CORS, rate limiting |
-| Service | .NET 8 API | Domain logic, CQRS, hierarchy queries, compensation |
-| Database | PostgreSQL 16 | Source of truth, `ltree` for hierarchy, RLS |
+| Service | .NET 9 API | Domain logic, CQRS, hierarchy queries, compensation |
+| Database | PostgreSQL 17 | Source of truth, `ltree` for hierarchy, RLS |
 | Cache | Redis (ElastiCache) | Subtrees, RBAC visibility sets, sessions |
 | Auth | Auth0 | SSO (OIDC/PKCE), role management |
 | Flags | Split.io | Feature flags, kill switches |
@@ -149,10 +149,30 @@ flowchart LR
 
 | Workflow | Trigger | Steps |
 |----------|---------|-------|
-| `ci.yml` | PR opened | Lint, test, SonarQube, Snyk |
-| `cd-deploy.yml` | Merge to main | Build Docker -> push ECR -> Argo canary |
-| `infra.yml` | Terraform changes | Plan on PR, apply on merge |
-| `db-migrate.yml` | Manual | Run EF Core migrations |
+| `ci.yml` | Any PR | Lint, test, SonarCloud, Snyk |
+| `deploy-test.yml` | Merge to `develop` | Build Docker → push ECR → deploy to test EKS (direct rollout) |
+| `deploy-beta.yml` | Merge to `release/*` or manual dispatch | Build Docker → push ECR → deploy to beta EKS (canary 50→100) |
+| `deploy-prod.yml` | Merge to `main` or manual dispatch | Build Docker → push ECR → deploy to prod EKS (canary 20→40→80→100 + analysis) — requires approval |
+| `infra-{env}.yml` | Changes to `infra/terraform/environments/{env}/` | Plan on PR, apply on merge |
+| `db-migrate.yml` | Manual dispatch (select environment) | Run EF Core migrations |
+
+---
+
+## Environments
+
+| Config | test | beta | prod |
+|--------|------|------|------|
+| Branch | `develop` | `release/*` | `main` |
+| URL | test.budgetalloc.example.com | beta.budgetalloc.example.com | app.budgetalloc.example.com |
+| EKS nodes | 2 (single AZ) | 3 (multi-AZ) | 6+ (3 AZs) |
+| RDS | db.t4g.medium, single | db.r6g.large, multi-AZ | db.r6g.xlarge, multi-AZ + replica |
+| Redis | 1 node | 2-node cluster | 3-node cluster, multi-AZ |
+| Argo Rollouts | Disabled | Canary 50→100 | Canary 20→40→80→100 |
+| Log level | DEBUG | INFO | WARN |
+| Feature flags | All ON | Selective | Controlled rollout |
+| Seed data | 5000+ employees | 1000 subset | Real data only |
+
+**Git branching:** `feature/*` → PR to `develop` → test → `release/*` → beta → `main` → prod
 
 ---
 

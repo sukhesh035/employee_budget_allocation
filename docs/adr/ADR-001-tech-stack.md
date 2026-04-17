@@ -22,10 +22,10 @@ We need an enterprise-grade technology stack for a platform that manages organiz
 
 We will use a three-tier architecture:
 
-1. **React SPA** (`apps/web`) -- Single-page application for the frontend, using React Query for server state management.
+1. **React SPA** (`apps/web`) -- Single-page application for the frontend, using TanStack Query v5 for server state management.
 2. **NestJS BFF** (`apps/bff`) -- Backend-for-frontend in TypeScript. This is the only publicly exposed service. It handles authentication (Auth0), RBAC enforcement, caching (Redis), and circuit-breaking before proxying requests to the internal API.
-3. **.NET 8 API** (`apps/api`) -- Internal API in C# following Clean Architecture. Handles domain logic, CQRS via MediatR, and data access via Entity Framework Core. Never exposed publicly.
-4. **PostgreSQL 16** -- Primary database with the `ltree` extension for hierarchy queries and row-level security for data-layer RBAC enforcement.
+3. **.NET 9 API** (`apps/api`) -- Internal API in C# following Clean Architecture. Handles domain logic, CQRS via MediatR 12, and data access via Entity Framework Core 9. Never exposed publicly.
+4. **PostgreSQL 17** -- Primary database with the `ltree` extension for hierarchy queries and row-level security for data-layer RBAC enforcement.
 5. **ElastiCache Redis** -- Caching layer for hierarchy and compensation rollup queries.
 
 ## Consequences
@@ -34,7 +34,7 @@ We will use a three-tier architecture:
 
 - **BFF pattern** isolates the internal API from the public internet, reducing the attack surface for sensitive compensation data.
 - **NestJS** provides a structured, modular framework for the gateway layer with first-class TypeScript support, decorators for validation, and a mature middleware ecosystem.
-- **.NET 8** offers high performance for compute-heavy operations (compensation rollup), strong typing for financial calculations (decimal precision), and mature libraries for CQRS (MediatR) and validation (FluentValidation).
+- **.NET 9** offers high performance for compute-heavy operations (compensation rollup) with native AOT improvements, strong typing for financial calculations (decimal precision), and mature libraries for CQRS (MediatR 12) and validation (FluentValidation 11).
 - **PostgreSQL ltree** provides native, indexed hierarchical queries without the complexity of closure tables or nested sets.
 - **PostgreSQL RLS** enables data-layer security enforcement as a last line of defense, independent of application code.
 - **Separation of concerns** -- the BFF handles cross-cutting concerns (auth, caching, rate limiting) while the .NET API focuses purely on domain logic.
@@ -64,4 +64,4 @@ React frontend with a plain Express.js backend and PostgreSQL.
 
 React frontend with a Spring Boot (Java/Kotlin) backend.
 
-- **Rejected because:** The team has stronger C# expertise than Java/Kotlin. Spring Boot is viable but .NET 8 offers comparable performance with a more concise syntax (C# 12 primary constructors, records). The BFF pattern still applies, so we would need a separate gateway layer regardless.
+- **Rejected because:** The team has stronger C# expertise than Java/Kotlin. Spring Boot is viable but .NET 9 offers comparable performance with a more concise syntax (C# 13 params collections, semi-auto properties, `field` keyword, records). The BFF pattern still applies, so we would need a separate gateway layer regardless.

@@ -69,7 +69,7 @@ graph LR
 ```xml
 <!-- .NET -->
 <PackageReference Include="StackExchange.Redis" Version="2.*" />
-<PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="8.*" />
+<PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="9.*" />
 ```
 
 **`apps/api/src/Infrastructure/Caching/RedisCacheService.cs`:**

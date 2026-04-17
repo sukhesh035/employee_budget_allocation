@@ -118,10 +118,10 @@ erDiagram
 
 **Install packages in `Infrastructure.csproj`:**
 ```xml
-<PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.*" />
-<PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL.Ltree" Version="8.*" />
-<PackageReference Include="EFCore.NamingConventions" Version="8.*" />
-<PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.*" />
+<PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.*" />
+<PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL.Ltree" Version="9.*" />
+<PackageReference Include="EFCore.NamingConventions" Version="9.*" />
+<PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.*" />
 ```
 
 **`apps/api/src/Infrastructure/Persistence/AppDbContext.cs`:**

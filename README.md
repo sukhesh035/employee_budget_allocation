@@ -3,9 +3,9 @@
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-87%25-yellowgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![.NET](https://img.shields.io/badge/.NET-8.0-purple)
-![React](https://img.shields.io/badge/React-18-61dafb)
-![NestJS](https://img.shields.io/badge/NestJS-10-e0234e)
+![.NET](https://img.shields.io/badge/.NET-9.0-purple)
+![React](https://img.shields.io/badge/React-19-61dafb)
+![NestJS](https://img.shields.io/badge/NestJS-11-e0234e)
 
 ---
 
@@ -55,7 +55,7 @@ graph LR
 
     subgraph Backend
         C[NestJS BFF]
-        D[.NET 8 API]
+        D[.NET 9 API]
     end
 
     subgraph Data
@@ -82,19 +82,19 @@ graph LR
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| Frontend | React 18, TypeScript, Vite | Single-page application |
+| Frontend | React 19, TypeScript 5.7, Vite 6 | Single-page application |
 | UI Components | Ant Design / Tailwind CSS | Component library and styling |
-| BFF | NestJS 10, TypeScript | Backend-for-Frontend, API orchestration |
-| API | .NET 8, C# | Core business logic and domain services |
-| Database | PostgreSQL 15 | Primary data store |
-| Cache | Redis 7 | Session cache, query caching |
+| BFF | NestJS 11, TypeScript | Backend-for-Frontend, API orchestration |
+| API | .NET 9, C# 13 | Core business logic and domain services |
+| Database | PostgreSQL 17 | Primary data store |
+| Cache | Redis 7.4 (Valkey compatible) | Session cache, query caching |
 | Auth | Auth0 | SSO, OIDC, RBAC |
 | Feature Flags | Split.io | Progressive rollout |
 | Infrastructure | Terraform, AWS (EKS) | Cloud provisioning |
 | Orchestration | Kubernetes, Argo Rollouts | Container orchestration, canary deploys |
-| Monorepo | Nx | Build orchestration, dependency graph |
+| Monorepo | Nx 20 | Build orchestration, dependency graph |
 | CI/CD | GitHub Actions | Automated build, test, deploy |
-| Contract Testing | Pact | Consumer-driven contract tests |
+| Contract Testing | Pact 5 (pact-js v13) | Consumer-driven contract tests |
 
 ---
 
@@ -105,7 +105,7 @@ employee_budget_allocation/
 ├── apps/
 │   ├── web/                  # React SPA (Vite + TypeScript)
 │   ├── bff/                  # NestJS BFF
-│   └── api/                  # .NET 8 API
+│   └── api/                  # .NET 9 API
 ├── libs/
 │   ├── shared-types/         # Shared TypeScript types
 │   └── contracts/            # Pact contract tests
@@ -134,9 +134,9 @@ employee_budget_allocation/
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| Node.js | 20 LTS | JavaScript runtime |
-| .NET SDK | 8.0 | C# API development |
-| Docker & Docker Compose | Latest | Local service orchestration |
+| Node.js | 22 LTS | JavaScript runtime |
+| .NET SDK | 9.0 | C# API development |
+| Docker & Docker Compose | Docker 27+ with Compose v2 | Local service orchestration |
 | Auth0 Account | — | Free tier works for development |
 
 ### Quick Start
@@ -204,25 +204,51 @@ API documentation is auto-generated via **Swagger / OpenAPI** and available when
 
 ---
 
+## Environments
+
+The platform uses a **3-environment promotion strategy** with isolated AWS accounts:
+
+| Environment | Purpose | Branch Trigger | URL |
+|-------------|---------|---------------|-----|
+| **test** | Dev testing, integration testing, QA | PR merges to `develop` | `test.budgetalloc.example.com` |
+| **beta** | Pre-production, UAT, canary validation | PR merges to `release/*` | `beta.budgetalloc.example.com` |
+| **prod** | Production | PR merges to `main` (manual approval) | `app.budgetalloc.example.com` |
+
+| Config | test | beta | prod |
+|--------|------|------|------|
+| EKS nodes | 2 (single AZ) | 3 (multi-AZ) | 6+ (multi-AZ, 3 AZs) |
+| RDS | Single, db.t4g.medium | Multi-AZ, db.r6g.large | Multi-AZ, db.r6g.xlarge + read replica |
+| Redis | 1 node, cache.t4g.small | 2-node cluster | 3-node cluster, Multi-AZ |
+| Argo Rollouts | Disabled (direct deploy) | Canary 50%→100% | Canary 20%→40%→80%→100% with analysis |
+| Log level | DEBUG | INFO | WARN |
+
 ## Deployment
 
 The project follows an **8-phase implementation plan** documented in [`docs/phases/`](docs/phases/). Each phase is independently deployable.
 
-**CI/CD** is managed via GitHub Actions with the following pipeline:
+**CI/CD** is managed via GitHub Actions with environment-specific workflows:
 
-1. Lint and type-check
-2. Unit and integration tests
-3. Pact contract verification
-4. Docker image build and push to ECR
-5. Deploy to staging via Argo Rollouts (canary strategy)
-6. Smoke tests against staging
-7. Promote to production
-
-Canary deployments use **Argo Rollouts** with automated analysis — traffic is gradually shifted from 10% → 25% → 50% → 100% with automatic rollback on error rate thresholds.
+| Workflow | Trigger | What it does |
+|----------|---------|-------------|
+| `ci.yml` | Any PR | Lint, unit test, integration test, SonarCloud, Snyk |
+| `deploy-test.yml` | Merge to `develop` | Build images → push ECR → deploy to test EKS (direct rollout) |
+| `deploy-beta.yml` | Merge to `release/*` or manual dispatch | Build images → push ECR → deploy to beta EKS (canary 50→100) |
+| `deploy-prod.yml` | Merge to `main` or manual dispatch | Build images → push ECR → deploy to prod EKS (canary 20→40→80→100) — requires manual approval |
+| `infra-{env}.yml` | Changes to `infra/terraform/environments/{env}/` | Terraform plan on PR, apply on merge |
+| `db-migrate.yml` | Manual dispatch (select environment) | Run EF Core migrations against selected environment's RDS |
 
 ---
 
 ## Contributing
+
+### Git Branching Strategy
+
+```
+main          → deploys to prod (requires manual approval gate)
+release/*     → deploys to beta automatically
+develop       → deploys to test automatically
+feature/*     → PR to develop (CI only, no deploy)
+```
 
 ### Branch Naming
 
@@ -244,12 +270,13 @@ docs: update architecture decision record for caching
 
 ### Pull Request Process
 
-1. Create a feature branch from `main`
+1. Create a feature branch from `develop`
 2. Ensure all tests pass (`make test`)
 3. Ensure linting passes (`make lint`)
 4. Fill out the PR template with context and screenshots
 5. Request review from at least one code owner
 6. Squash-merge after approval
+7. Changes flow: `develop` (test) → `release/*` (beta) → `main` (prod)
 
 ---
 

@@ -216,12 +216,12 @@ describe('FieldFilterService', () => {
 public class IntegrationTestBase : IAsyncLifetime
 {
     protected PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:16-alpine")
+        .WithImage("postgres:17-alpine")
         .WithDatabase("eba_test")
         .Build();
 
     protected RedisContainer _redis = new RedisBuilder()
-        .WithImage("redis:7-alpine")
+        .WithImage("redis:7.4-alpine")
         .Build();
 
     protected AppDbContext Db { get; private set; } = default!;
@@ -608,16 +608,16 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:17-alpine
         env: { POSTGRES_DB: eba_test, POSTGRES_USER: test, POSTGRES_PASSWORD: test }
         ports: ['5432:5432']
       redis:
-        image: redis:7-alpine
+        image: redis:7.4-alpine
         ports: ['6379:6379']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
-        with: { dotnet-version: '8.0' }
+        with: { dotnet-version: '9.0' }
       - run: dotnet test --settings tests/coverlet.runsettings --collect:"XPlat Code Coverage"
         working-directory: apps/api
       - uses: codecov/codecov-action@v4

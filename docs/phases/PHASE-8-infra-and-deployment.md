@@ -11,7 +11,7 @@ Provision production infrastructure on AWS with Terraform, deploy all services t
 - [ ] React SPA served via CloudFront + S3
 - [ ] API Gateway routes to EKS with rate limiting
 - [ ] Secrets managed via AWS Secrets Manager + External Secrets Operator
-- [ ] CI/CD: push to main → build → test → canary deploy
+- [ ] CI/CD: 3-environment pipeline (test → beta → prod) with progressive canary
 - [ ] Observability: metrics, traces, logs, dashboards, alerts
 - [ ] Multi-AZ with automated failover, RPO < 1h, RTO < 15min
 
@@ -47,8 +47,8 @@ graph TB
             end
 
             subgraph "Data Subnets (3 AZs)"
-                RDS["RDS PostgreSQL 16<br/>(Multi-AZ)"]
-                REDIS["ElastiCache Redis 7<br/>(Cluster Mode)"]
+                RDS["RDS PostgreSQL 17<br/>(Multi-AZ)"]
+                REDIS["ElastiCache Redis 7.4<br/>(Cluster Mode)"]
             end
         end
 
@@ -84,9 +84,18 @@ infra/terraform/
 ├── providers.tf
 ├── backend.tf
 ├── environments/
-│   ├── dev.tfvars
-│   ├── staging.tfvars
-│   └── prod.tfvars
+│   ├── test/
+│   │   ├── main.tf        # Backend config + module instantiation
+│   │   ├── terraform.tfvars
+│   │   └── backend.tf     # S3 state: eba-tfstate-test
+│   ├── beta/
+│   │   ├── main.tf
+│   │   ├── terraform.tfvars
+│   │   └── backend.tf     # S3 state: eba-tfstate-beta
+│   └── prod/
+│       ├── main.tf
+│       ├── terraform.tfvars
+│       └── backend.tf     # S3 state: eba-tfstate-prod
 ├── modules/
 │   ├── vpc/
 │   │   ├── main.tf          # VPC, subnets, route tables, NAT
@@ -147,7 +156,7 @@ module "vpc" {
   database_subnets = ["10.0.21.0/24", "10.0.22.0/24", "10.0.23.0/24"]
 
   enable_nat_gateway   = true
-  single_nat_gateway   = var.environment != "prod"
+  single_nat_gateway   = var.environment == "test"
   enable_dns_hostnames = true
   enable_dns_support   = true
 
@@ -171,7 +180,7 @@ module "eks" {
   version = "~> 20.0"
 
   cluster_name    = "${var.project}-${var.environment}"
-  cluster_version = "1.29"
+  cluster_version = "1.31"
 
   vpc_id     = var.vpc_id
   subnet_ids = var.private_subnet_ids
@@ -182,9 +191,9 @@ module "eks" {
   eks_managed_node_groups = {
     general = {
       instance_types = ["m6i.large"]
-      min_size       = var.environment == "prod" ? 3 : 1
-      max_size       = var.environment == "prod" ? 10 : 3
-      desired_size   = var.environment == "prod" ? 3 : 2
+      min_size       = var.environment == "prod" ? 6 : (var.environment == "beta" ? 3 : 2)
+      max_size       = var.environment == "prod" ? 15 : (var.environment == "beta" ? 6 : 3)
+      desired_size   = var.environment == "prod" ? 6 : (var.environment == "beta" ? 3 : 2)
 
       labels = { workload = "general" }
     }
@@ -231,10 +240,10 @@ module "rds" {
   identifier = "${var.project}-${var.environment}"
 
   engine               = "postgres"
-  engine_version       = "16.2"
-  family               = "postgres16"
-  major_engine_version = "16"
-  instance_class       = var.environment == "prod" ? "db.r6g.xlarge" : "db.t4g.medium"
+  engine_version       = "17.2"
+  family               = "postgres17"
+  major_engine_version = "17"
+  instance_class       = var.environment == "prod" ? "db.r6g.xlarge" : (var.environment == "beta" ? "db.r6g.large" : "db.t4g.medium")
 
   allocated_storage     = 100
   max_allocated_storage = 500
@@ -243,11 +252,11 @@ module "rds" {
   username = "eba_admin"
   port     = 5432
 
-  multi_az               = var.environment == "prod"
+  multi_az               = var.environment != "test"
   db_subnet_group_name   = var.database_subnet_group
   vpc_security_group_ids = [var.rds_sg_id]
 
-  backup_retention_period = var.environment == "prod" ? 30 : 7
+  backup_retention_period = var.environment == "prod" ? 30 : (var.environment == "beta" ? 14 : 7)
   backup_window           = "03:00-04:00"
   maintenance_window      = "sun:04:00-sun:05:00"
 
@@ -267,7 +276,7 @@ module "rds" {
 # RDS Proxy for connection pooling
 resource "aws_db_proxy" "main" {
   name                   = "${var.project}-${var.environment}"
-  debug_logging          = var.environment != "prod"
+  debug_logging          = var.environment == "test"
   engine_family          = "POSTGRESQL"
   idle_client_timeout    = 1800
   require_tls            = true
@@ -284,6 +293,20 @@ resource "aws_db_proxy" "main" {
 ```
 
 ### 8.5 — Kubernetes Manifests
+
+Kustomize overlays per environment:
+
+```
+k8s/
+├── base/                    # Shared manifests (rollouts, services, network policies)
+└── overlays/
+    ├── test/                # Direct deploy, no canary, reduced replicas
+    │   └── kustomization.yaml
+    ├── beta/                # Canary 50%→100%, 3 replicas
+    │   └── kustomization.yaml
+    └── prod/                # Canary 20%→40%→80%→100% + analysis, 6+ replicas
+        └── kustomization.yaml
+```
 
 **`k8s/base/api-rollout.yaml`:**
 ```yaml
@@ -480,32 +503,34 @@ spec:
   data:
     - secretKey: ConnectionStrings__DefaultConnection
       remoteRef:
-        key: eba/prod/database
+        key: eba/${ENVIRONMENT}/database    # test, beta, or prod
         property: connection_string
     - secretKey: Redis__ConnectionString
       remoteRef:
-        key: eba/prod/redis
+        key: eba/${ENVIRONMENT}/redis
         property: connection_string
     - secretKey: HMAC_SECRET
       remoteRef:
-        key: eba/prod/hmac
+        key: eba/${ENVIRONMENT}/hmac
         property: secret
     - secretKey: Auth0__Domain
       remoteRef:
-        key: eba/prod/auth0
+        key: eba/${ENVIRONMENT}/auth0
         property: domain
 ```
 
 ### 8.7 — GitHub Actions CI/CD
+
+The platform uses a 3-environment promotion strategy: **test** (from `develop`), **beta** (from `release/*`), and **prod** (from `main`).
 
 **`.github/workflows/ci.yml`:**
 ```yaml
 name: CI
 on:
   push:
-    branches: [main, 'release/**']
+    branches: [develop, main, 'release/**']
   pull_request:
-    branches: [main]
+    branches: [develop]
 
 jobs:
   lint:
@@ -548,9 +573,102 @@ jobs:
           docker push $IMAGE
 ```
 
-**`.github/workflows/cd-deploy.yml`:**
+**`.github/workflows/deploy-test.yml`:**
 ```yaml
-name: Deploy
+name: Deploy to Test
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [develop]
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name eba-test --region us-east-1
+
+      - name: Deploy SPA to S3
+        run: |
+          aws s3 sync apps/web/dist/ s3://eba-test-spa --delete
+          aws cloudfront create-invalidation --distribution-id ${{ secrets.CF_DIST_ID }} --paths "/*"
+
+      - name: Deploy BFF (direct rollout)
+        run: |
+          kubectl set image deployment/eba-bff \
+            bff=${{ secrets.ECR_REGISTRY }}/eba-bff:test-${{ github.sha }}
+
+      - name: Deploy API (direct rollout)
+        run: |
+          kubectl set image deployment/eba-api \
+            api=${{ secrets.ECR_REGISTRY }}/eba-api:test-${{ github.sha }}
+
+      - name: Tag images
+        run: |
+          for svc in bff api; do
+            docker tag ${{ secrets.ECR_REGISTRY }}/eba-$svc:${{ github.sha }} \
+              ${{ secrets.ECR_REGISTRY }}/eba-$svc:test-latest
+            docker push ${{ secrets.ECR_REGISTRY }}/eba-$svc:test-latest
+          done
+```
+
+**`.github/workflows/deploy-beta.yml`:**
+```yaml
+name: Deploy to Beta
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: ['release/**']
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment: beta
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name eba-beta --region us-east-1
+
+      - name: Deploy SPA to S3
+        run: |
+          aws s3 sync apps/web/dist/ s3://eba-beta-spa --delete
+          aws cloudfront create-invalidation --distribution-id ${{ secrets.CF_DIST_ID }} --paths "/*"
+
+      - name: Deploy BFF (Argo Canary 50%→100%)
+        run: |
+          kubectl argo rollouts set image eba-bff \
+            bff=${{ secrets.ECR_REGISTRY }}/eba-bff:beta-${{ github.sha }}
+
+      - name: Deploy API (Argo Canary 50%→100%)
+        run: |
+          kubectl argo rollouts set image eba-api \
+            api=${{ secrets.ECR_REGISTRY }}/eba-api:beta-${{ github.sha }}
+
+      - name: Wait for rollouts
+        run: |
+          kubectl argo rollouts status eba-bff --timeout 600
+          kubectl argo rollouts status eba-api --timeout 600
+```
+
+**`.github/workflows/deploy-prod.yml`:**
+```yaml
+name: Deploy to Prod
 on:
   workflow_run:
     workflows: [CI]
@@ -561,7 +679,7 @@ jobs:
   deploy:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    environment: production
+    environment: production    # Requires 2-reviewer manual approval
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
@@ -577,20 +695,32 @@ jobs:
           aws s3 sync apps/web/dist/ s3://eba-prod-spa --delete
           aws cloudfront create-invalidation --distribution-id ${{ secrets.CF_DIST_ID }} --paths "/*"
 
-      - name: Deploy BFF (Argo Rollout)
+      - name: Deploy BFF (Argo Canary 20%→40%→80%→100% + analysis)
         run: |
           kubectl argo rollouts set image eba-bff \
-            bff=${{ secrets.ECR_REGISTRY }}/eba-bff:${{ github.sha }}
+            bff=${{ secrets.ECR_REGISTRY }}/eba-bff:prod-${{ github.sha }}
 
-      - name: Deploy API (Argo Rollout)
+      - name: Deploy API (Argo Canary 20%→40%→80%→100% + analysis)
         run: |
           kubectl argo rollouts set image eba-api \
-            api=${{ secrets.ECR_REGISTRY }}/eba-api:${{ github.sha }}
+            api=${{ secrets.ECR_REGISTRY }}/eba-api:prod-${{ github.sha }}
 
       - name: Wait for rollouts
         run: |
           kubectl argo rollouts status eba-bff --timeout 600
           kubectl argo rollouts status eba-api --timeout 600
+
+      - name: Tag release images
+        run: |
+          VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")
+          for svc in bff api; do
+            docker tag ${{ secrets.ECR_REGISTRY }}/eba-$svc:${{ github.sha }} \
+              ${{ secrets.ECR_REGISTRY }}/eba-$svc:prod-latest
+            docker tag ${{ secrets.ECR_REGISTRY }}/eba-$svc:${{ github.sha }} \
+              ${{ secrets.ECR_REGISTRY }}/eba-$svc:v$VERSION
+            docker push ${{ secrets.ECR_REGISTRY }}/eba-$svc:prod-latest
+            docker push ${{ secrets.ECR_REGISTRY }}/eba-$svc:v$VERSION
+          done
 ```
 
 **`.github/workflows/db-migrate.yml`:**
@@ -601,7 +731,7 @@ on:
     inputs:
       environment:
         type: choice
-        options: [staging, prod]
+        options: [test, beta, prod]
 
 jobs:
   migrate:
@@ -644,12 +774,12 @@ data:
       resource:
         attributes:
           - key: environment
-            value: production
+            value: "${ENVIRONMENT}"   # test, beta, or prod
             action: upsert
     exporters:
       awsxray: { region: us-east-1 }
       awscloudwatchlogs:
-        log_group_name: /eba/prod
+        log_group_name: /eba/${ENVIRONMENT}
         region: us-east-1
       prometheusremotewrite:
         endpoint: "${AMP_REMOTE_WRITE_ENDPOINT}"

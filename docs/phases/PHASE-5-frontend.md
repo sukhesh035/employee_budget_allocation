@@ -51,7 +51,7 @@ graph TB
     end
 
     subgraph Data Layer
-        Hooks["React Query Hooks"]
+        Hooks["TanStack Query v5 Hooks"]
         ApiClient["API Client (axios)"]
         AuthInterceptor["Auth Interceptor"]
     end
@@ -86,7 +86,7 @@ apps/web/src/
 │   ├── departments.api.ts
 │   └── reports.api.ts
 ├── hooks/
-│   ├── useEmployees.ts              # React Query hooks
+│   ├── useEmployees.ts              # TanStack Query v5 hooks
 │   ├── useEmployee.ts
 │   ├── useDepartments.ts
 │   ├── useBudgetRollup.ts
@@ -187,7 +187,7 @@ export function setupAuthInterceptor(getAccessTokenSilently: () => Promise<strin
 }
 ```
 
-### 5.2 — React Query Hooks
+### 5.2 — TanStack Query v5 Hooks
 
 **`apps/web/src/hooks/useEmployees.ts`:**
 ```typescript
@@ -530,7 +530,7 @@ Org tree: horizontal scroll on mobile, pinch-to-zoom enabled.
 | Task | Time |
 |------|------|
 | Project structure + routing | 2h |
-| API client + React Query hooks | 3h |
+| API client + TanStack Query v5 hooks | 3h |
 | Org tree d3.js visualization | 6h |
 | Dashboard page | 3h |
 | Employee search + autocomplete | 3h |
