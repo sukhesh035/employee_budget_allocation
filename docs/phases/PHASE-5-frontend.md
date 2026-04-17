@@ -1,17 +1,22 @@
-# Phase 5: Frontend
+# Phase 5: Frontend (Micro Frontend Architecture)
 
 ## Goal
 
-Build the React SPA with org tree visualization, employee search/detail views, budget dashboards, RBAC-aware UI, and feature flag integration.
+Build the Shell host app and four domain MFEs using Nx 20 Module Federation: org tree visualization (mfe-hierarchy), compensation management (mfe-compensation), budget dashboards (mfe-budget), and HR admin (mfe-admin). Set up shared libs for UI components, auth, state, types, and utilities.
 
 ## Success Criteria
 
-- [ ] Interactive org tree renders 5000+ node hierarchy (virtualized)
+- [ ] Shell app loads, provides layout/nav/auth, and dynamically loads all 4 MFEs
+- [ ] MFE load failure triggers error boundary fallback — never crashes the shell
+- [ ] Interactive org tree renders 5000+ node hierarchy (virtualized) in mfe-hierarchy
 - [ ] Employee search with autocomplete returns results in < 200ms
-- [ ] Dashboard shows department budget overview with drill-down
-- [ ] Compensation detail panel shows history with charts
-- [ ] UI elements hidden/disabled based on user role
+- [ ] Dashboard shows department budget overview with drill-down in mfe-budget
+- [ ] Compensation detail panel shows history with charts in mfe-compensation
+- [ ] mfe-admin supports employee CRUD and CSV import
+- [ ] UI elements hidden/disabled based on user role (shared-auth RBAC)
 - [ ] Feature flags control new feature rollout
+- [ ] Shared singletons (react, react-dom, react-router-dom, @tanstack/react-query, @auth0/auth0-react) are not duplicated across MFEs
+- [ ] Each MFE builds and deploys independently
 - [ ] WCAG 2.1 AA compliance on core flows
 - [ ] Responsive layout works on tablet+
 
@@ -19,155 +24,340 @@ Build the React SPA with org tree visualization, employee search/detail views, b
 
 - **Phase 3** — Auth0 React SDK configured
 - **Phase 4** — BFF endpoints available
+- **Nx 20** workspace initialized with Module Federation plugin
 
-## Component Architecture
+## Micro Frontend Architecture
 
 ```mermaid
 graph TB
-    subgraph App Shell
+    subgraph Shell["Shell (apps/shell)"]
         Router["React Router v6"]
-        Auth["Auth0Provider"]
+        Auth["Auth0Provider (shared-auth)"]
         Split["SplitFactory"]
-        Query["QueryClientProvider"]
-    end
-
-    subgraph Pages
-        Dashboard["DashboardPage"]
-        OrgChart["OrgChartPage"]
-        EmpSearch["EmployeeSearchPage"]
-        EmpDetail["EmployeeDetailPage"]
-        DeptView["DepartmentPage"]
-        Reports["ReportsPage"]
-    end
-
-    subgraph Shared Components
-        TreeViz["OrgTreeVisualization<br/>(d3.js)"]
-        SearchBar["SearchAutocomplete"]
-        CompPanel["CompensationPanel"]
-        BudgetCard["BudgetSummaryCard"]
-        DataTable["VirtualizedDataTable"]
-        RbacGate["RbacGate"]
+        Query["QueryClientProvider (shared-state)"]
+        ErrorBoundaries["MFE Error Boundaries"]
         NavBar["NavigationBar"]
     end
 
-    subgraph Data Layer
-        Hooks["TanStack Query v5 Hooks"]
-        ApiClient["API Client (axios)"]
-        AuthInterceptor["Auth Interceptor"]
+    subgraph MFEs
+        MFE_H["mfe-hierarchy<br/>OrgChartPage, OrgTreeVisualization"]
+        MFE_C["mfe-compensation<br/>CompensationPanel, CompensationChart"]
+        MFE_B["mfe-budget<br/>DashboardPage, BudgetOverview"]
+        MFE_A["mfe-admin<br/>EmployeeSearchPage, EmployeeForm, CSVImport"]
     end
 
-    Router --> Dashboard & OrgChart & EmpSearch & EmpDetail & DeptView & Reports
-    Dashboard --> BudgetCard & TreeViz
-    OrgChart --> TreeViz
-    EmpSearch --> SearchBar & DataTable
-    EmpDetail --> CompPanel
-    DeptView --> BudgetCard & DataTable
-    Pages --> RbacGate
+    subgraph SharedLibs["Shared Libs (libs/)"]
+        SharedUI["shared-ui<br/>Button, Card, Modal, DataTable"]
+        SharedTypes["shared-types<br/>DTOs, interfaces"]
+        SharedAuth["shared-auth<br/>Auth0Provider, usePermissions, RbacGate"]
+        SharedState["shared-state<br/>Event bus, QueryClient, cross-MFE events"]
+        SharedUtils["shared-utils<br/>formatCurrency, formatDate, validation"]
+    end
+
+    subgraph DataLayer["Data Layer (per MFE)"]
+        Hooks["TanStack Query v5 Hooks"]
+        ApiClient["API Client (axios)"]
+        AuthInterceptor["Auth Interceptor (shared-auth)"]
+    end
+
+    Shell -->|"Module Federation remoteEntry.js"| MFEs
+    MFEs --> SharedLibs
     Hooks --> ApiClient --> AuthInterceptor
 ```
 
 ## Project Structure
 
 ```
-apps/web/src/
+apps/shell/src/
 ├── main.tsx
 ├── app/
 │   ├── App.tsx
-│   ├── routes.tsx
-│   └── providers.tsx
-├── auth/
-│   ├── Auth0ProviderWithNavigate.tsx
-│   ├── AuthGuard.tsx
-│   ├── usePermissions.ts
-│   └── CallbackPage.tsx
-├── api/
-│   ├── client.ts                    # Axios instance + interceptors
-│   ├── employees.api.ts             # Employee API functions
-│   ├── departments.api.ts
-│   └── reports.api.ts
-├── hooks/
-│   ├── useEmployees.ts              # TanStack Query v5 hooks
-│   ├── useEmployee.ts
-│   ├── useDepartments.ts
-│   ├── useBudgetRollup.ts
-│   ├── useOrgTree.ts
-│   └── useDebounce.ts
-├── features/
-│   ├── dashboard/
-│   │   ├── DashboardPage.tsx
-│   │   ├── BudgetOverview.tsx
-│   │   ├── HeadcountCard.tsx
-│   │   └── RecentChanges.tsx
-│   ├── org-chart/
-│   │   ├── OrgChartPage.tsx
-│   │   ├── OrgTreeVisualization.tsx  # d3.js tree
-│   │   ├── OrgNodeCard.tsx
-│   │   ├── TreeControls.tsx
-│   │   └── useTreeLayout.ts
-│   ├── employees/
-│   │   ├── EmployeeSearchPage.tsx
-│   │   ├── EmployeeDetailPage.tsx
-│   │   ├── EmployeeCard.tsx
-│   │   └── EmployeeForm.tsx
-│   ├── compensation/
-│   │   ├── CompensationPanel.tsx
-│   │   ├── CompensationChart.tsx
-│   │   ├── CompensationHistory.tsx
-│   │   └── AddCompensationModal.tsx
-│   ├── departments/
-│   │   ├── DepartmentPage.tsx
-│   │   ├── DepartmentTree.tsx
-│   │   └── BudgetDetailCard.tsx
-│   └── reports/
-│       ├── ReportsPage.tsx
-│       ├── ManagerSpanReport.tsx
-│       └── BudgetRollupReport.tsx
+│   ├── routes.tsx              # Lazy-loads MFEs via React.lazy + Module Federation
+│   └── providers.tsx           # Auth0, QueryClient, SplitFactory
 ├── components/
-│   ├── ui/
-│   │   ├── Button.tsx
-│   │   ├── Card.tsx
-│   │   ├── Modal.tsx
-│   │   ├── Skeleton.tsx
-│   │   ├── Badge.tsx
-│   │   └── Tooltip.tsx
 │   ├── layout/
 │   │   ├── AppLayout.tsx
 │   │   ├── NavigationBar.tsx
 │   │   ├── Sidebar.tsx
 │   │   └── PageHeader.tsx
-│   ├── data/
-│   │   ├── DataTable.tsx             # TanStack Table + virtualization
-│   │   ├── SearchAutocomplete.tsx
-│   │   ├── CursorPagination.tsx
-│   │   └── EmptyState.tsx
-│   └── rbac/
-│       ├── RbacGate.tsx              # Renders children only if role matches
-│       └── RbacButton.tsx
-├── lib/
-│   ├── format.ts                     # Currency, date formatters
-│   ├── tree.ts                       # Tree data manipulation
-│   └── constants.ts
-├── types/
-│   └── index.ts                      # Re-export from shared-types
-└── styles/
-    ├── globals.css
-    └── variables.css
+│   └── error/
+│       ├── MfeErrorBoundary.tsx # Catches MFE load failures, renders fallback
+│       └── GlobalErrorBoundary.tsx
+├── config/
+│   └── module-federation.ts    # Remote MFE URLs per environment
+└── bootstrap.tsx               # Async bootstrap for Module Federation
+
+apps/mfe-hierarchy/src/
+├── components/
+│   ├── OrgChartPage.tsx
+│   ├── OrgTreeVisualization.tsx # d3.js tree
+│   ├── OrgNodeCard.tsx
+│   └── TreeControls.tsx
+├── hooks/
+│   ├── useOrgTree.ts
+│   └── useTreeLayout.ts
+└── services/
+    └── hierarchy.api.ts        # BFF API client for hierarchy endpoints
+
+apps/mfe-compensation/src/
+├── components/
+│   ├── CompensationPanel.tsx
+│   ├── CompensationChart.tsx
+│   ├── CompensationHistory.tsx
+│   └── AddCompensationModal.tsx
+├── hooks/
+│   └── useCompensation.ts
+└── services/
+    └── compensation.api.ts
+
+apps/mfe-budget/src/
+├── components/
+│   ├── DashboardPage.tsx
+│   ├── BudgetOverview.tsx
+│   ├── BudgetDetailCard.tsx
+│   ├── HeadcountCard.tsx
+│   └── RecentChanges.tsx
+├── hooks/
+│   └── useBudgetRollup.ts
+└── services/
+    └── budget.api.ts
+
+apps/mfe-admin/src/
+├── components/
+│   ├── EmployeeSearchPage.tsx
+│   ├── EmployeeDetailPage.tsx
+│   ├── EmployeeCard.tsx
+│   ├── EmployeeForm.tsx
+│   ├── CSVImportPage.tsx
+│   └── ImportStatusPanel.tsx
+├── hooks/
+│   ├── useEmployees.ts
+│   └── useImportJob.ts
+└── services/
+    └── admin.api.ts
+
+libs/shared-ui/src/
+├── Button.tsx
+├── Card.tsx
+├── Modal.tsx
+├── Skeleton.tsx
+├── Badge.tsx
+├── Tooltip.tsx
+├── DataTable.tsx               # TanStack Table + virtualization
+├── SearchAutocomplete.tsx
+├── CursorPagination.tsx
+└── EmptyState.tsx
+
+libs/shared-auth/src/
+├── Auth0ProviderWithNavigate.tsx
+├── AuthGuard.tsx
+├── usePermissions.ts
+├── RbacGate.tsx
+├── RbacButton.tsx
+└── CallbackPage.tsx
+
+libs/shared-state/src/
+├── query-client.ts             # Shared TanStack Query v5 client
+├── event-bus.ts                # Cross-MFE event bus (pub/sub)
+└── events.ts                   # Event type definitions
+
+libs/shared-types/src/
+└── index.ts                    # DTOs, interfaces, enums
+
+libs/shared-utils/src/
+├── format.ts                   # Currency, date formatters
+├── tree.ts                     # Tree data manipulation
+└── constants.ts
 ```
 
 ## Task Breakdown
 
-### 5.1 — API Client & Auth Interceptor
+### 5.1 — Shell App Setup + Module Federation Config
 
-**`apps/web/src/api/client.ts`:**
+Set up the Shell as the Module Federation host. Configure remotes for all 4 MFEs.
+
+**`apps/shell/src/config/module-federation.ts`:**
+```typescript
+const remotes = {
+  'mfe-hierarchy': process.env.NX_MFE_HIERARCHY_URL || 'http://localhost:4201/remoteEntry.js',
+  'mfe-compensation': process.env.NX_MFE_COMPENSATION_URL || 'http://localhost:4202/remoteEntry.js',
+  'mfe-budget': process.env.NX_MFE_BUDGET_URL || 'http://localhost:4203/remoteEntry.js',
+  'mfe-admin': process.env.NX_MFE_ADMIN_URL || 'http://localhost:4204/remoteEntry.js',
+};
+
+export default remotes;
+```
+
+**Module Federation shared singletons (in each app's webpack config):**
+```typescript
+shared: {
+  react: { singleton: true, requiredVersion: '^19.0.0' },
+  'react-dom': { singleton: true, requiredVersion: '^19.0.0' },
+  'react-router-dom': { singleton: true, requiredVersion: '^6.0.0' },
+  '@tanstack/react-query': { singleton: true, requiredVersion: '^5.0.0' },
+  '@auth0/auth0-react': { singleton: true, requiredVersion: '^2.0.0' },
+}
+```
+
+### 5.2 — MFE Error Boundaries
+
+**`apps/shell/src/components/error/MfeErrorBoundary.tsx`:**
+```typescript
+import { Component, ReactNode } from 'react';
+
+interface Props {
+  mfeName: string;
+  children: ReactNode;
+  fallback?: ReactNode;
+}
+
+interface State { hasError: boolean; error?: Error }
+
+export class MfeErrorBoundary extends Component<Props, State> {
+  state: State = { hasError: false };
+
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error(`[MFE:${this.props.mfeName}] Failed to load:`, error);
+    // Emit event to shared-state event bus for observability
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback ?? (
+        <div className="p-8 text-center">
+          <h3 className="text-lg font-semibold">Unable to load {this.props.mfeName}</h3>
+          <p className="text-gray-500 mt-2">Please try refreshing the page.</p>
+          <button onClick={() => this.setState({ hasError: false })}
+            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded">
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+```
+
+### 5.3 — Shell Routing with Lazy MFE Loading
+
+**`apps/shell/src/app/routes.tsx`:**
+```typescript
+import { lazy, Suspense } from 'react';
+import { Routes, Route } from 'react-router-dom';
+import { MfeErrorBoundary } from '../components/error/MfeErrorBoundary';
+import { Skeleton } from '@shared-ui';
+
+const MfeHierarchy = lazy(() => import('mfe-hierarchy/Module'));
+const MfeCompensation = lazy(() => import('mfe-compensation/Module'));
+const MfeBudget = lazy(() => import('mfe-budget/Module'));
+const MfeAdmin = lazy(() => import('mfe-admin/Module'));
+
+export function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/hierarchy/*" element={
+        <MfeErrorBoundary mfeName="Hierarchy">
+          <Suspense fallback={<Skeleton />}>
+            <MfeHierarchy />
+          </Suspense>
+        </MfeErrorBoundary>
+      } />
+      <Route path="/compensation/*" element={
+        <MfeErrorBoundary mfeName="Compensation">
+          <Suspense fallback={<Skeleton />}>
+            <MfeCompensation />
+          </Suspense>
+        </MfeErrorBoundary>
+      } />
+      <Route path="/budget/*" element={
+        <MfeErrorBoundary mfeName="Budget">
+          <Suspense fallback={<Skeleton />}>
+            <MfeBudget />
+          </Suspense>
+        </MfeErrorBoundary>
+      } />
+      <Route path="/admin/*" element={
+        <MfeErrorBoundary mfeName="Admin">
+          <Suspense fallback={<Skeleton />}>
+            <MfeAdmin />
+          </Suspense>
+        </MfeErrorBoundary>
+      } />
+    </Routes>
+  );
+}
+```
+
+### 5.4 — Shared Auth & RBAC Components (libs/shared-auth)
+
+**`libs/shared-auth/src/RbacGate.tsx`:**
+```typescript
+import { usePermissions } from './usePermissions';
+import { Role } from '@shared-types';
+
+interface RbacGateProps {
+  minRole: Role;
+  children: React.ReactNode;
+  fallback?: React.ReactNode;
+}
+
+export function RbacGate({ minRole, children, fallback = null }: RbacGateProps) {
+  const { hasRole } = usePermissions();
+  return hasRole(minRole) ? <>{children}</> : <>{fallback}</>;
+}
+```
+
+### 5.5 — Cross-MFE Event Bus (libs/shared-state)
+
+**`libs/shared-state/src/event-bus.ts`:**
+```typescript
+type EventHandler<T = unknown> = (payload: T) => void;
+
+class EventBus {
+  private handlers = new Map<string, Set<EventHandler>>();
+
+  on<T>(event: string, handler: EventHandler<T>): () => void {
+    if (!this.handlers.has(event)) this.handlers.set(event, new Set());
+    this.handlers.get(event)!.add(handler as EventHandler);
+    return () => this.handlers.get(event)?.delete(handler as EventHandler);
+  }
+
+  emit<T>(event: string, payload: T): void {
+    this.handlers.get(event)?.forEach(handler => handler(payload));
+  }
+}
+
+// Singleton — shared across all MFEs via Module Federation
+export const eventBus = new EventBus();
+```
+
+**Example cross-MFE events:**
+```typescript
+// libs/shared-state/src/events.ts
+export const MFE_EVENTS = {
+  EMPLOYEE_SELECTED: 'employee:selected',       // mfe-admin → mfe-compensation
+  COMPENSATION_UPDATED: 'compensation:updated',  // mfe-compensation → mfe-budget
+  BUDGET_ALLOCATED: 'budget:allocated',           // mfe-budget → mfe-hierarchy
+  NAVIGATE_TO: 'shell:navigate',                  // any MFE → shell
+} as const;
+```
+
+### 5.6 — API Client & Auth Interceptor
+
+**`libs/shared-auth/src/api-client.ts`:**
 ```typescript
 import axios from 'axios';
 
 export const apiClient = axios.create({
-  baseURL: '/api/v1',
+  baseURL: '/bff/v1',
   headers: { 'Content-Type': 'application/json' },
 });
 
-// Auth interceptor added in providers.tsx after Auth0 is initialized
 export function setupAuthInterceptor(getAccessTokenSilently: () => Promise<string>) {
   apiClient.interceptors.request.use(async (config) => {
     const token = await getAccessTokenSilently();
@@ -187,51 +377,11 @@ export function setupAuthInterceptor(getAccessTokenSilently: () => Promise<strin
 }
 ```
 
-### 5.2 — TanStack Query v5 Hooks
+### 5.7 — mfe-hierarchy: Org Tree Visualization
 
-**`apps/web/src/hooks/useEmployees.ts`:**
+**`apps/mfe-hierarchy/src/components/OrgTreeVisualization.tsx`:**
 ```typescript
-import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '@/api/client';
-
-export function useEmployeeSearch(params: { search?: string; departmentId?: string }) {
-  return useInfiniteQuery({
-    queryKey: ['employees', params],
-    queryFn: ({ pageParam }) =>
-      apiClient.get('/employees', {
-        params: { ...params, cursor: pageParam, limit: 25 },
-      }).then(r => r.data),
-    getNextPageParam: (lastPage) => lastPage.hasMore ? lastPage.nextCursor : undefined,
-    enabled: true,
-    staleTime: 30_000,
-  });
-}
-
-export function useEmployee(id: string) {
-  return useQuery({
-    queryKey: ['employees', id],
-    queryFn: () => apiClient.get(`/employees/${id}/full-profile`).then(r => r.data),
-    staleTime: 60_000,
-  });
-}
-
-export function useAddCompensation(employeeId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: AddCompensationInput) =>
-      apiClient.post(`/employees/${employeeId}/compensation`, data).then(r => r.data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['employees', employeeId] });
-    },
-  });
-}
-```
-
-### 5.3 — Org Tree Visualization
-
-**`apps/web/src/features/org-chart/OrgTreeVisualization.tsx`:**
-```typescript
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect } from 'react';
 import * as d3 from 'd3';
 
 interface OrgNode {
@@ -254,7 +404,6 @@ export function OrgTreeVisualization({ data, onNodeClick }: {
     if (!svgRef.current || !data) return;
 
     const width = containerRef.current?.clientWidth ?? 1200;
-    const height = containerRef.current?.clientHeight ?? 800;
     const margin = { top: 40, right: 120, bottom: 40, left: 120 };
 
     const svg = d3.select(svgRef.current);
@@ -293,7 +442,6 @@ export function OrgTreeVisualization({ data, onNodeClick }: {
       .style('cursor', 'pointer')
       .on('click', (_, d) => onNodeClick(d.data));
 
-    // Node cards
     nodes.append('rect')
       .attr('x', -80).attr('y', -25)
       .attr('width', 160).attr('height', 50)
@@ -322,119 +470,23 @@ export function OrgTreeVisualization({ data, onNodeClick }: {
 }
 ```
 
-### 5.4 — RBAC-Aware UI Components
+### 5.8 — mfe-compensation: Compensation Panel
 
-**`apps/web/src/components/rbac/RbacGate.tsx`:**
+**`apps/mfe-compensation/src/components/CompensationPanel.tsx`:**
 ```typescript
-import { usePermissions } from '@/auth/usePermissions';
-import { Role } from '@shared-types';
+import { useEmployee } from '../hooks/useCompensation';
+import { RbacGate } from '@shared-auth';
+import { formatCurrency } from '@shared-utils';
 
-interface RbacGateProps {
-  minRole: Role;
-  children: React.ReactNode;
-  fallback?: React.ReactNode;
-}
-
-export function RbacGate({ minRole, children, fallback = null }: RbacGateProps) {
-  const { hasRole } = usePermissions();
-  return hasRole(minRole) ? <>{children}</> : <>{fallback}</>;
-}
-```
-
-**`apps/web/src/components/rbac/RbacButton.tsx`:**
-```typescript
-export function RbacButton({ minRole, ...props }: RbacGateProps & ButtonProps) {
-  const { hasRole } = usePermissions();
-  if (!hasRole(minRole)) return null;
-  return <Button {...props} />;
-}
-```
-
-### 5.5 — Dashboard Page
-
-**`apps/web/src/features/dashboard/DashboardPage.tsx`:**
-```typescript
-export function DashboardPage() {
-  const { data: rollup } = useBudgetRollup();
-  const { hasRole } = usePermissions();
-
-  return (
-    <AppLayout>
-      <PageHeader title="Dashboard" />
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <HeadcountCard />
-        <RbacGate minRole="dept_head">
-          <BudgetOverview data={rollup} />
-        </RbacGate>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card title="Organization Overview">
-          <OrgTreeVisualization data={miniTree} onNodeClick={navigateToEmployee} />
-        </Card>
-        <RbacGate minRole="manager">
-          <Card title="Recent Compensation Changes">
-            <RecentChanges />
-          </Card>
-        </RbacGate>
-      </div>
-    </AppLayout>
-  );
-}
-```
-
-### 5.6 — Employee Search with Autocomplete
-
-**`apps/web/src/components/data/SearchAutocomplete.tsx`:**
-```typescript
-export function SearchAutocomplete({ onSelect }: { onSelect: (emp: EmployeeDto) => void }) {
-  const [query, setQuery] = useState('');
-  const debouncedQuery = useDebounce(query, 300);
-  const { data, isLoading } = useEmployeeSearch({ search: debouncedQuery });
-
-  return (
-    <Combobox onChange={onSelect}>
-      <div className="relative">
-        <Combobox.Input
-          className="w-full rounded-lg border p-3"
-          placeholder="Search employees by name..."
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label="Search employees"
-        />
-        {isLoading && <Spinner className="absolute right-3 top-3" />}
-        <Combobox.Options className="absolute mt-1 max-h-60 w-full overflow-auto rounded-lg bg-white shadow-lg z-10">
-          {data?.pages.flatMap(p => p.items).map(emp => (
-            <Combobox.Option key={emp.id} value={emp}
-              className="cursor-pointer p-3 hover:bg-blue-50">
-              <span className="font-medium">{emp.firstName} {emp.lastName}</span>
-              <span className="text-sm text-gray-500 ml-2">{emp.title}</span>
-            </Combobox.Option>
-          ))}
-        </Combobox.Options>
-      </div>
-    </Combobox>
-  );
-}
-```
-
-### 5.7 — Compensation Detail Panel
-
-**`apps/web/src/features/compensation/CompensationPanel.tsx`:**
-```typescript
 export function CompensationPanel({ employeeId }: { employeeId: string }) {
   const { data: employee } = useEmployee(employeeId);
-  const { hasRole } = usePermissions();
   const compensation = employee?.compensation ?? [];
-
-  const currentBase = compensation.find(
-    c => c.compType === 'BASE_SALARY' && !c.endDate
-  );
 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-3 gap-4">
-        <StatCard label="Base Salary" value={formatCurrency(currentBase?.amount)} />
-        <StatCard label="Total Compensation" value={formatCurrency(totalComp(compensation))} />
+        <StatCard label="Base Salary" value={formatCurrency(compensation[0]?.baseSalary)} />
+        <StatCard label="Total Compensation" value={formatCurrency(compensation[0]?.totalCompensation)} />
         <StatCard label="Records" value={compensation.length} />
       </div>
 
@@ -450,57 +502,87 @@ export function CompensationPanel({ employeeId }: { employeeId: string }) {
 }
 ```
 
-### 5.8 — Split.io Feature Flags
+### 5.9 — mfe-budget: Dashboard Page
 
-**`apps/web/src/app/providers.tsx`:**
+**`apps/mfe-budget/src/components/DashboardPage.tsx`:**
 ```typescript
-import { SplitFactory } from '@splitsoftware/splitio-react';
+import { useBudgetRollup } from '../hooks/useBudgetRollup';
+import { RbacGate } from '@shared-auth';
 
-export function Providers({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth0();
-
-  const splitConfig: SplitIO.IBrowserSettings = {
-    core: {
-      authorizationKey: import.meta.env.VITE_SPLIT_KEY,
-      key: user?.sub ?? 'anonymous',
-    },
-  };
+export function DashboardPage() {
+  const { data: rollup } = useBudgetRollup();
 
   return (
-    <SplitFactory config={splitConfig}>
-      <QueryClientProvider client={queryClient}>
-        {children}
-      </QueryClientProvider>
-    </SplitFactory>
+    <div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <HeadcountCard />
+        <RbacGate minRole="dept_head">
+          <BudgetOverview data={rollup} />
+        </RbacGate>
+      </div>
+      <BudgetDetailCard />
+    </div>
   );
 }
 ```
 
-**Usage:**
+### 5.10 — mfe-admin: Employee Management + CSV Import
+
+**`apps/mfe-admin/src/components/EmployeeSearchPage.tsx`:**
 ```typescript
-import { useTreatments } from '@splitsoftware/splitio-react';
+import { useEmployeeSearch } from '../hooks/useEmployees';
+import { SearchAutocomplete, DataTable } from '@shared-ui';
+import { eventBus, MFE_EVENTS } from '@shared-state';
 
-function EmployeeDetailPage() {
-  const treatments = useTreatments(['new_compensation_chart', 'budget_forecasting']);
-  const showNewChart = treatments.new_compensation_chart.treatment === 'on';
+export function EmployeeSearchPage() {
+  const handleSelect = (emp: EmployeeDto) => {
+    eventBus.emit(MFE_EVENTS.EMPLOYEE_SELECTED, { employeeId: emp.id });
+  };
 
-  return showNewChart ? <CompensationChartV2 /> : <CompensationChart />;
+  return (
+    <div>
+      <SearchAutocomplete onSelect={handleSelect} />
+      <DataTable columns={employeeColumns} useData={useEmployeeSearch} />
+    </div>
+  );
 }
 ```
 
-### 5.9 — Accessibility
+### 5.11 — Split.io Feature Flags
 
-Key requirements applied across all components:
+**`apps/shell/src/app/providers.tsx`:**
+```typescript
+import { SplitFactory } from '@splitsoftware/splitio-react';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClient } from '@shared-state';
+import { Auth0ProviderWithNavigate } from '@shared-auth';
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  return (
+    <Auth0ProviderWithNavigate>
+      <SplitFactory config={splitConfig}>
+        <QueryClientProvider client={queryClient}>
+          {children}
+        </QueryClientProvider>
+      </SplitFactory>
+    </Auth0ProviderWithNavigate>
+  );
+}
+```
+
+### 5.12 — Accessibility
+
+Key requirements applied across shell and all MFEs:
 
 - All interactive elements focusable and keyboard-navigable
 - `aria-label` on icon-only buttons
 - `aria-live="polite"` on search results
-- Color contrast ratio ≥ 4.5:1
+- Color contrast ratio >= 4.5:1
 - Focus trap in modals
-- Skip-to-content link
-- Screen reader announcements for data loading states
+- Skip-to-content link in shell
+- Screen reader announcements for data loading states and MFE loading
 
-### 5.10 — Responsive Design
+### 5.13 — Responsive Design
 
 Breakpoints (Tailwind defaults):
 - `sm` (640px): Stack cards vertically
@@ -514,29 +596,39 @@ Org tree: horizontal scroll on mobile, pinch-to-zoom enabled.
 
 | # | Test | Verification |
 |---|------|-------------|
-| 1 | Login redirects to Auth0 | Click Login → Auth0 hosted page |
-| 2 | Dashboard loads | After login, dashboard renders with cards |
-| 3 | Org tree renders | Navigate to org chart → tree visible, zoom/pan works |
-| 4 | Search works | Type partial name → autocomplete shows matches |
-| 5 | Employee detail loads | Click employee → detail page with info |
-| 6 | Compensation visible for manager | Login as manager → comp panel shows data |
-| 7 | Compensation hidden for viewer | Login as viewer → no comp section visible |
-| 8 | Feature flag toggles UI | Enable `new_compensation_chart` → V2 chart renders |
-| 9 | Keyboard navigation | Tab through all interactive elements |
-| 10 | Responsive layout | Resize to 768px → layout adapts |
+| 1 | Shell loads | Shell renders layout, navigation, auth |
+| 2 | MFEs load dynamically | Navigate to /hierarchy, /compensation, /budget, /admin — each MFE loads |
+| 3 | MFE failure isolation | Kill mfe-hierarchy dev server → error boundary renders fallback, other MFEs work |
+| 4 | Login redirects to Auth0 | Click Login → Auth0 hosted page |
+| 5 | Dashboard loads | After login, budget dashboard renders with cards |
+| 6 | Org tree renders | Navigate to org chart → tree visible, zoom/pan works |
+| 7 | Search works | Type partial name → autocomplete shows matches |
+| 8 | Employee detail loads | Click employee → detail page with info |
+| 9 | Compensation visible for manager | Login as manager → comp panel shows data |
+| 10 | Compensation hidden for viewer | Login as viewer → no comp section visible |
+| 11 | Cross-MFE event bus | Select employee in mfe-admin → mfe-compensation receives event |
+| 12 | Feature flag toggles UI | Enable `new_compensation_chart` → V2 chart renders |
+| 13 | No duplicate singletons | Check bundle — react loaded once, not per MFE |
+| 14 | Keyboard navigation | Tab through all interactive elements |
+| 15 | Responsive layout | Resize to 768px → layout adapts |
 
 ## Estimated Effort
 
 | Task | Time |
 |------|------|
-| Project structure + routing | 2h |
-| API client + TanStack Query v5 hooks | 3h |
-| Org tree d3.js visualization | 6h |
-| Dashboard page | 3h |
-| Employee search + autocomplete | 3h |
-| Employee detail + compensation | 4h |
-| Department views | 3h |
-| RBAC gate components | 1h |
+| Shell setup + Module Federation config | 4h |
+| MFE error boundaries + fallbacks | 2h |
+| Shell routing with lazy MFE loading | 2h |
+| shared-auth (Auth0, RBAC components) | 3h |
+| shared-state (event bus, QueryClient) | 2h |
+| shared-ui (design system components) | 4h |
+| shared-types + shared-utils | 2h |
+| API client + auth interceptor | 2h |
+| mfe-hierarchy (org tree d3.js) | 6h |
+| mfe-compensation (panel, chart, history) | 4h |
+| mfe-budget (dashboard, budget views) | 4h |
+| mfe-admin (employee CRUD, CSV import) | 5h |
 | Split.io integration | 1h |
 | Responsive + accessibility | 4h |
-| **Total** | **~30h** |
+| Cross-MFE integration testing | 3h |
+| **Total** | **~48h** |

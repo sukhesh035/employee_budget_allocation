@@ -40,7 +40,7 @@ An employee hierarchy and budget allocation platform serving 5,000+ employees. C
 
 | Layer | Technology | Rationale |
 |-------|-----------|-----------|
-| Frontend | React (Vite + TypeScript) | Component-driven SPA, strong ecosystem |
+| Frontend | React 19 (Nx 20 + Module Federation + TypeScript) | Shell + 4 MFEs, independent deployability |
 | Middleware / BFF | NestJS (TypeScript) | Auth0 guard, RBAC filtering, aggregation |
 | Backend API | .NET 9 (C# 13) | Domain logic, CQRS handlers, high performance |
 | Database | PostgreSQL 17 | Relational hierarchy, ltree extension, RLS |
@@ -74,7 +74,7 @@ graph TB
     subgraph AWS Account
         subgraph Public
             CF[CloudFront + WAF<br/>CORS origin whitelist]
-            S3SPA[S3<br/>React SPA]
+            S3Shell[S3<br/>Shell + MFE Assets]
             APIGW[API Gateway<br/>CORS headers<br/>throttling / validation]
         end
 
@@ -106,7 +106,7 @@ graph TB
 
     CI --> CD
     CD --> ECR
-    CF --> S3SPA
+    CF --> S3Shell
     CF --> APIGW
     APIGW --> Nest
     Nest --> DotNet
@@ -126,6 +126,46 @@ graph TB
     GHSecrets -.-> CI
     GHSecrets -.-> CD
 ```
+
+### Micro Frontend Architecture
+
+The frontend uses **Webpack Module Federation** (Nx 20) to compose independent micro frontends at runtime:
+
+```mermaid
+graph TB
+    subgraph "Browser"
+        Shell["Shell (apps/shell)<br/>Layout, Nav, Auth, Routing<br/>Error Boundaries"]
+        Shell -->|"remoteEntry.js"| MFE_H["mfe-hierarchy<br/>Org Tree Visualization"]
+        Shell -->|"remoteEntry.js"| MFE_C["mfe-compensation<br/>Compensation Management"]
+        Shell -->|"remoteEntry.js"| MFE_B["mfe-budget<br/>Budget Allocation"]
+        Shell -->|"remoteEntry.js"| MFE_A["mfe-admin<br/>HR Admin (CRUD, CSV)"]
+    end
+
+    subgraph "Shared Singletons (Module Federation)"
+        React["react / react-dom"]
+        Router["react-router-dom"]
+        TQ["@tanstack/react-query"]
+        Auth0["@auth0/auth0-react"]
+    end
+
+    subgraph "Shared Libs (libs/)"
+        UI["shared-ui"]
+        Types["shared-types"]
+        AuthLib["shared-auth"]
+        State["shared-state<br/>(event bus)"]
+        Utils["shared-utils"]
+    end
+
+    Shell --> React & Router & TQ & Auth0
+    MFE_H & MFE_C & MFE_B & MFE_A --> React & Router & TQ & Auth0
+    MFE_H & MFE_C & MFE_B & MFE_A --> UI & Types & AuthLib & State & Utils
+```
+
+**Key rules:**
+- MFEs communicate only via the shared event bus (`libs/shared-state`) or shared Auth0 context (`libs/shared-auth`) — no direct imports between MFEs.
+- Each MFE deploys independently to its own S3 path (e.g., `s3://eba-{env}-mfe/mfe-hierarchy/`).
+- Shell loads MFEs dynamically; if an MFE fails to load, an error boundary renders a fallback — never crashing the entire app.
+- Shared singletons (`react`, `react-dom`, `react-router-dom`, `@tanstack/react-query`, `@auth0/auth0-react`) are provided by the Shell via Module Federation `shared` config to avoid duplicate bundles.
 
 ### CORS -- 3 Layers
 
@@ -152,9 +192,9 @@ graph TB
 | Workflow | Trigger | Steps |
 |----------|---------|-------|
 | `ci.yml` | Any PR | lint, unit test, integration test, SonarCloud scan, Snyk security scan |
-| `deploy-test.yml` | merge to `develop` | build Docker images, push to ECR, deploy to test EKS (direct rollout) |
-| `deploy-beta.yml` | merge to `release/*` or manual dispatch ("promote from test") | build Docker images, push to ECR, deploy to beta EKS (canary 50→100) |
-| `deploy-prod.yml` | merge to `main` or manual dispatch ("promote from beta") | build Docker images, push to ECR, deploy to prod EKS (canary 20→40→80→100 + analysis), requires manual approval |
+| `deploy-test.yml` | merge to `develop` | build Docker images (BFF, API), build MFEs, push to ECR/S3, deploy to test EKS (direct rollout) |
+| `deploy-beta.yml` | merge to `release/*` or manual dispatch ("promote from test") | build Docker images (BFF, API), build MFEs, push to ECR/S3, deploy to beta EKS (canary 50→100) |
+| `deploy-prod.yml` | merge to `main` or manual dispatch ("promote from beta") | build Docker images (BFF, API), build MFEs, push to ECR/S3, deploy to prod EKS (canary 20→40→80→100 + analysis), requires manual approval |
 | `infra-test.yml` | changes to `infra/terraform/environments/test/` | `terraform plan` on PR, `terraform apply` on merge |
 | `infra-beta.yml` | changes to `infra/terraform/environments/beta/` | `terraform plan` on PR, `terraform apply` on merge |
 | `infra-prod.yml` | changes to `infra/terraform/environments/prod/` | `terraform plan` on PR, `terraform apply` on merge (requires approval) |
@@ -286,16 +326,16 @@ erDiagram
 
 ```mermaid
 sequenceDiagram
-    participant SPA as React SPA
+    participant Shell as Shell App
     participant Auth0 as Auth0 Tenant
     participant BFF as NestJS BFF
     participant API as .NET API
     participant DB as PostgreSQL
 
-    SPA->>Auth0: Auth Code + PKCE flow<br/>(no client secret in SPA)
-    Auth0-->>SPA: id_token + access_token (JWT)
+    Shell->>Auth0: Auth Code + PKCE flow<br/>(no client secret in browser)
+    Auth0-->>Shell: id_token + access_token (JWT)
 
-    SPA->>BFF: API call<br/>Authorization: Bearer {access_token}
+    Shell->>BFF: API call<br/>Authorization: Bearer {access_token}
 
     Note over BFF: 1. Verify JWT signature (JWKS)<br/>2. Check expiry<br/>3. Extract claims: sub, roles[], permissions[]<br/>4. Lookup employee by auth0_user_id<br/>5. Build RBAC context (visibility set)
 
@@ -306,7 +346,7 @@ sequenceDiagram
     API->>DB: Query with RLS enforced
     DB-->>API: Filtered results
     API-->>BFF: Response
-    BFF-->>SPA: Filtered + shaped response
+    BFF-->>Shell: Filtered + shaped response
 ```
 
 ### Role Hierarchy
@@ -391,7 +431,7 @@ CREATE POLICY subtree_visibility ON employee_tree_view
 ### Interview Talking Points
 
 - **3-layer RBAC is not redundant** -- defense-in-depth. If NestJS is compromised (SSRF), .NET blocks. If .NET has a bug, RLS prevents data leakage at DB level.
-- **PKCE flow** -- SPA cannot store client secrets. Auth Code + PKCE is the only correct choice. Implicit flow is deprecated per OAuth 2.1.
+- **PKCE flow** -- Browser apps cannot store client secrets. Auth Code + PKCE is the only correct choice. Implicit flow is deprecated per OAuth 2.1.
 - **Internal header signing** -- NestJS signs `X-User-Id` and `X-Subtree-Ids` with HMAC. .NET verifies. Prevents header injection if someone bypasses NestJS.
 - **Visibility set caching** -- Computing recursive subtree on every request is expensive. Cache in Redis with TTL, invalidate on org structure changes.
 
@@ -410,8 +450,8 @@ All APIs use URI-path versioning (`/v1/`). The BFF and backend API are versioned
 
 ```mermaid
 flowchart LR
-    subgraph "React SPA"
-        A[TanStack Query Client]
+    subgraph "Shell + MFEs"
+        A[TanStack Query Client<br/>via shared-state]
     end
     subgraph "NestJS BFF — /bff/v1/"
         B[BFF Controllers]
@@ -446,7 +486,7 @@ All error responses conform to RFC 7807 Problem Details:
 }
 ```
 
-The `traceId` field carries the W3C Trace Context identifier, enabling correlation from the SPA through BFF and backend to the database.
+The `traceId` field carries the W3C Trace Context identifier, enabling correlation from the Shell/MFEs through BFF and backend to the database.
 
 ### 6.4 Rate Limiting Tiers
 
@@ -641,20 +681,20 @@ Content-Type: application/json
 
 ```mermaid
 sequenceDiagram
-    participant SPA as React SPA
+    participant Shell as Shell App
     participant BFF as NestJS BFF
     participant Redis as ElastiCache Redis
     participant API as .NET API
     participant PG as PostgreSQL
 
-    SPA->>BFF: GET /bff/v1/hierarchy/subtree/dept-eng?depth=3
+    Shell->>BFF: GET /bff/v1/hierarchy/subtree/dept-eng?depth=3
     Note over BFF: Validate JWT (Auth0 JWKS)
     Note over BFF: Extract RBAC claims → visibility scope
 
     BFF->>Redis: GET hierarchy:subtree:dept-eng:depth3:user-scope-hash
     alt Cache HIT
         Redis-->>BFF: Cached subtree JSON
-        BFF-->>SPA: 200 OK (cacheHit: true)
+        BFF-->>Shell: 200 OK (cacheHit: true)
     else Cache MISS
         Redis-->>BFF: null
         BFF->>API: GET /api/v1/hierarchy/subtree/dept-eng?depth=3
@@ -669,7 +709,7 @@ sequenceDiagram
 
         API-->>BFF: 200 OK — tree JSON
         BFF->>Redis: SET hierarchy:subtree:dept-eng:... EX 300
-        BFF-->>SPA: 200 OK (cacheHit: false)
+        BFF-->>Shell: 200 OK (cacheHit: false)
     end
 ```
 
@@ -1302,7 +1342,7 @@ All resilience mechanisms emit structured telemetry:
 
 ### 11.1 Guiding Principles
 
-Observability is structured around three pillars — **logs**, **traces**, and **metrics** — unified by a **correlation ID** that originates at the React SPA and propagates through every layer. Every request is traceable from button click to database query.
+Observability is structured around three pillars — **logs**, **traces**, and **metrics** — unified by a **correlation ID** that originates at the Shell app and propagates through every layer. Every request is traceable from button click to database query.
 
 ### 11.2 Correlation ID Propagation
 
@@ -1316,7 +1356,7 @@ Every HTTP request entering the NestJS BFF generates (or forwards) a `X-Correlat
 ```mermaid
 flowchart LR
     subgraph Browser
-        A[React SPA] -->|"X-Correlation-ID: uuid\ntraceparent: 00-traceId-spanId-01"| B
+        A[Shell App] -->|"X-Correlation-ID: uuid\ntraceparent: 00-traceId-spanId-01"| B
     end
 
     subgraph EKS["EKS Cluster"]
@@ -1372,7 +1412,7 @@ All services emit **JSON-structured logs** to stdout, collected by Fluent Bit Da
 
 | Service | Library | Log Destination | Extras |
 |---------|---------|-----------------|--------|
-| React SPA | `pino` (browser build) | CloudWatch RUM / console | Client errors, performance entries |
+| Shell + MFEs | `pino` (browser build) | CloudWatch RUM / console | Client errors, performance entries |
 | NestJS BFF | `nestjs-pino` | stdout → Fluent Bit → CloudWatch | Request/response logging (body redacted), Auth0 token claims |
 | .NET 9 API | `Serilog` + `Serilog.Formatting.Compact` | stdout → Fluent Bit → CloudWatch | CQRS handler names, EF Core 9 query tags |
 | PostgreSQL | `pgAudit` extension | CloudWatch via RDS log export | DDL/DML audit, slow query log (>100ms) |
@@ -1390,7 +1430,7 @@ All services emit **JSON-structured logs** to stdout, collected by Fluent Bit Da
 
 | Layer | SDK | Auto-Instrumentation | Manual Spans |
 |-------|-----|----------------------|--------------|
-| React SPA | `@opentelemetry/sdk-trace-web` | `fetch`, `XMLHttpRequest` | Route transitions, Auth0 redirect |
+| Shell + MFEs | `@opentelemetry/sdk-trace-web` | `fetch`, `XMLHttpRequest` | Route transitions, Auth0 redirect |
 | NestJS BFF | `@opentelemetry/sdk-node` | Express, HTTP, Redis, pg | RBAC evaluation, cache operations |
 | .NET 9 API | `OpenTelemetry.Extensions.Hosting` | ASP.NET Core, EF Core 9, HttpClient | CQRS handlers, ltree queries, materialized view refresh |
 
@@ -1492,7 +1532,7 @@ All custom metrics are exposed via **Prometheus** format from each service, scra
 ```mermaid
 flowchart TB
     subgraph Application["Application Tier"]
-        SPA[React SPA]
+        SPA[Shell App]
         BFF[NestJS BFF Pod]
         API[.NET 9 API Pod]
     end
@@ -1579,7 +1619,7 @@ graph TB
 
 | Service | Framework | Target | Enforced |
 |---------|-----------|--------|----------|
-| React SPA | Vitest + React Testing Library | 80% lines | CI gate |
+| Shell + MFEs | Vitest + React Testing Library | 80% lines | CI gate |
 | NestJS BFF | Jest | 85% lines | CI gate |
 | .NET 9 API | xUnit + FluentAssertions + NSubstitute | 90% lines | CI gate |
 
@@ -1604,7 +1644,7 @@ graph TB
 | Cache Interceptor | Cache key generation, TTL logic, invalidation triggers |
 | Error Mapper | Maps .NET API error codes to user-friendly frontend errors |
 
-**What to Unit Test — React SPA:**
+**What to Unit Test — Shell + MFEs:**
 
 | Component | What to Test |
 |-----------|-------------|
@@ -1747,7 +1787,7 @@ k6/
 
 ### 12.7 Coverage Targets Summary
 
-| Layer | .NET API | NestJS BFF | React SPA |
+| Layer | .NET API | NestJS BFF | Shell + MFEs |
 |-------|----------|------------|-----------|
 | Unit | 90% line | 85% line | 80% line |
 | Integration | 80% of endpoints | 70% of routes | N/A |
@@ -2238,7 +2278,7 @@ flowchart TB
 
     subgraph DockerCompose["Docker Compose Stack"]
         subgraph Services["Application Services (hot-reload)"]
-            SPA["React SPA<br/>Vite dev server<br/>:5173<br/>Volume mount: ./apps/web/src"]
+            SPA["Shell App<br/>Webpack dev server<br/>:4200<br/>Loads MFEs via Module Federation"]
             BFF["NestJS BFF<br/>ts-node-dev --respawn<br/>:3000<br/>Volume mount: ./apps/bff/src"]
             DOTNET[".NET 9 API<br/>dotnet watch<br/>:8080<br/>Volume mount: ./apps/api"]
         end
@@ -2267,7 +2307,7 @@ flowchart TB
 
 | Service | Tool | Mechanism | Restart Time |
 |---------|------|-----------|-------------|
-| React SPA | Vite HMR | Volume mount `./apps/web/src`, Vite detects changes | < 100ms |
+| Shell + MFEs | Webpack HMR (Module Federation) | Volume mount `./apps/shell/src` + `./apps/mfe-*/src` | < 500ms |
 | NestJS BFF | `ts-node-dev --respawn` | Volume mount `./apps/bff/src`, process restart on change | < 2s |
 | .NET 9 API | `dotnet watch` | Volume mount `./apps/api`, incremental rebuild | < 3s |
 
@@ -2317,7 +2357,8 @@ make seed                  # Generate 5000 employee hierarchy
 make test                  # Run all unit tests (parallel)
 make test-api              # .NET unit tests
 make test-bff              # NestJS unit tests
-make test-web              # React unit tests
+make test-shell             # Shell unit tests
+make test-mfe               # All MFE unit tests
 make test-integration      # Integration tests (requires Docker stack)
 make test-contract         # Pact contract tests
 make test-e2e              # Playwright E2E (requires running stack)
@@ -2378,10 +2419,22 @@ What other options were evaluated and why were they rejected?
 ```
 employee-budget-allocation/
 ├── apps/
-│   ├── web/                    # React SPA (Vite)
+│   ├── shell/                   # Host React app (Module Federation)
 │   │   ├── src/
 │   │   ├── package.json
-│   │   └── vite.config.ts
+│   │   └── webpack.config.ts
+│   ├── mfe-hierarchy/           # Org tree visualization MFE
+│   │   ├── src/
+│   │   └── package.json
+│   ├── mfe-compensation/        # Compensation management MFE
+│   │   ├── src/
+│   │   └── package.json
+│   ├── mfe-budget/              # Budget allocation MFE
+│   │   ├── src/
+│   │   └── package.json
+│   ├── mfe-admin/               # HR admin MFE (employee CRUD, CSV import)
+│   │   ├── src/
+│   │   └── package.json
 │   ├── bff/                    # NestJS BFF
 │   │   ├── src/
 │   │   ├── package.json
@@ -2396,10 +2449,13 @@ employee-budget-allocation/
 │       │   ├── Unit/
 │       │   └── Integration/
 │       └── Api.sln
-├── packages/
-│   └── shared-types/           # TypeScript types shared between web & bff
-│       ├── src/
-│       └── package.json
+├── libs/
+│   ├── shared-ui/              # Shared UI components (design system)
+│   ├── shared-types/           # TypeScript types shared across shell, MFEs & BFF
+│   ├── shared-auth/            # Auth0 context provider, hooks, guards
+│   ├── shared-state/           # Event bus, shared TanStack Query client
+│   ├── shared-utils/           # Common utilities (formatting, validation)
+│   └── contracts/              # Pact contract tests
 ├── infra/
 │   └── terraform/              # (see Section 13)
 ├── k8s/
@@ -2434,29 +2490,31 @@ employee-budget-allocation/
 
 ```mermaid
 flowchart LR
-    subgraph Pipeline["Build Pipeline (Nx/Turborepo)"]
-        TYPES[shared-types<br/>build] --> WEB[web<br/>build]
+    subgraph Pipeline["Build Pipeline (Nx 20)"]
+        TYPES[shared-types<br/>build] --> SHELL[shell<br/>build]
+        TYPES --> MFE_H[mfe-hierarchy<br/>build]
+        TYPES --> MFE_C[mfe-compensation<br/>build]
+        TYPES --> MFE_B[mfe-budget<br/>build]
+        TYPES --> MFE_A[mfe-admin<br/>build]
         TYPES --> BFF_BUILD[bff<br/>build]
         API_BUILD[api<br/>build]
 
-        WEB --> WEB_TEST[web<br/>test]
+        SHELL --> SHELL_TEST[shell<br/>test]
+        MFE_H --> MFE_H_TEST[mfe-hierarchy<br/>test]
         BFF_BUILD --> BFF_TEST[bff<br/>test]
         API_BUILD --> API_TEST[api<br/>test]
-
-        WEB --> WEB_LINT[web<br/>lint]
-        BFF_BUILD --> BFF_LINT[bff<br/>lint]
-        API_BUILD --> API_LINT[api<br/>lint]
     end
 
-    subgraph Cache["Nx Cloud / Turborepo Remote Cache"]
+    subgraph Cache["Nx Cloud Remote Cache"]
         RC[(Remote Cache<br/>S3-backed)]
     end
 
     Pipeline -.->|"Cache hits skip<br/>unchanged packages"| Cache
 ```
 
-**Key Nx/Turborepo benefits:**
+**Key Nx benefits:**
 - **Affected-only CI:** `nx affected --target=test` runs tests only for packages changed in the PR
 - **Remote caching:** Build artifacts cached in S3; teammates reuse cached builds
-- **Task orchestration:** `shared-types` builds before `web` and `bff` automatically
+- **Task orchestration:** `shared-types` builds before shell and MFEs automatically
+- **Independent MFE deploys:** Each MFE can be built and deployed independently via `nx build mfe-hierarchy`
 - **Consistent tooling:** Same `lint`, `test`, `build` targets across JS/TS packages; .NET uses `dotnet` CLI wrapped in Nx executor

@@ -10,7 +10,8 @@ Workday-like app where managers see their team's total compensation as an org tr
 
 | Layer | Tech | Role |
 |-------|------|------|
-| Frontend | React SPA (Vite + TS) | Tree visualization, dashboards |
+| Frontend | Shell + 4 MFEs (Vite + Module Federation + TS) | Micro frontends: hierarchy, compensation, budget, admin |
+| Shared Libs | shared-ui, shared-types, shared-auth, shared-state, shared-utils | Design system, types, Auth0 context, event bus, utilities |
 | Gateway | NestJS BFF | Auth, RBAC filter, aggregation, CORS, rate limiting |
 | Service | .NET 9 API | Domain logic, CQRS, hierarchy queries, compensation |
 | Database | PostgreSQL 17 | Source of truth, `ltree` for hierarchy, RLS |
@@ -29,21 +30,23 @@ Workday-like app where managers see their team's total compensation as an org tr
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant R as React SPA
+    participant S as Shell App
+    participant M as MFE (hierarchy/comp/budget/admin)
     participant B as NestJS BFF
     participant A as .NET API
     participant D as PostgreSQL
 
-    U->>R: Click / navigate
-    R->>B: REST call (JWT in header)
+    U->>S: Click / navigate
+    S->>M: Load MFE via remoteEntry.js
+    M->>B: REST call (JWT in header)
     B->>B: Validate JWT + RBAC check
     B->>A: Forward (HMAC-signed headers)
     A->>A: Verify HMAC + re-validate RBAC
     A->>D: Query (RLS filters rows)
     D-->>A: Filtered results
     A-->>B: Response
-    B-->>R: JSON
-    R-->>U: Rendered view
+    B-->>M: JSON
+    M-->>U: Rendered view
 ```
 
 ---
@@ -150,6 +153,7 @@ flowchart LR
 | Workflow | Trigger | Steps |
 |----------|---------|-------|
 | `ci.yml` | Any PR | Lint, test, SonarCloud, Snyk |
+| `deploy-mfe.yml` | Manual dispatch (select MFE + env) | Build MFE → upload to S3 (`s3://spa-bucket/{mfe}/`) → invalidate CloudFront |
 | `deploy-test.yml` | Merge to `develop` | Build Docker → push ECR → deploy to test EKS (direct rollout) |
 | `deploy-beta.yml` | Merge to `release/*` or manual dispatch | Build Docker → push ECR → deploy to beta EKS (canary 50→100) |
 | `deploy-prod.yml` | Merge to `main` or manual dispatch | Build Docker → push ECR → deploy to prod EKS (canary 20→40→80→100 + analysis) — requires approval |
@@ -231,8 +235,8 @@ make docker-build   # build all Docker images
 
 ## Interview Talking Points (Top 5)
 
-1. **3-layer RBAC** -- Defense-in-depth, not redundancy. Each layer catches different failure modes.
-2. **CQRS + ltree** -- Separating read/write models. Materialized view with `ltree` gives sub-ms reads vs 50ms+ recursive CTEs.
-3. **Transactional outbox** -- Guarantees event delivery without distributed transactions. Outbox + domain write in single DB transaction.
-4. **Argo Rollouts canary** -- Progressive delivery with automated analysis. Rollback if error rate >1% or p99 >500ms.
-5. **HMAC header signing** -- Internal service auth. Even if someone bypasses NestJS, .NET verifies the caller's identity cryptographically.
+1. **Module Federation micro frontends** -- Independent team ownership, fault isolation, per-MFE canary deploys, aligned with backend CQRS domains.
+2. **3-layer RBAC** -- Defense-in-depth, not redundancy. Each layer catches different failure modes.
+3. **CQRS + ltree** -- Separating read/write models. Materialized view with `ltree` gives sub-ms reads vs 50ms+ recursive CTEs.
+4. **Transactional outbox** -- Guarantees event delivery without distributed transactions. Outbox + domain write in single DB transaction.
+5. **Argo Rollouts canary** -- Progressive delivery with automated analysis. Rollback if error rate >1% or p99 >500ms.

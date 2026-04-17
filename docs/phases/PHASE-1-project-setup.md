@@ -22,10 +22,18 @@ None — this is the foundation phase.
 ```mermaid
 graph TB
     subgraph Monorepo["Nx Monorepo"]
-        SPA["apps/web<br/>React + Vite + TS"]
+        SHELL["apps/shell<br/>Host React App (Module Federation)"]
+        MFE_H["apps/mfe-hierarchy<br/>Org Tree MFE"]
+        MFE_C["apps/mfe-compensation<br/>Compensation MFE"]
+        MFE_B["apps/mfe-budget<br/>Budget MFE"]
+        MFE_A["apps/mfe-admin<br/>Admin MFE"]
         BFF["apps/bff<br/>NestJS"]
         API["apps/api<br/>.NET 9 Web API"]
-        LibShared["libs/shared-types<br/>TS interfaces"]
+        LibUI["libs/shared-ui<br/>Design system"]
+        LibTypes["libs/shared-types<br/>TS interfaces"]
+        LibAuth["libs/shared-auth<br/>Auth0 context"]
+        LibState["libs/shared-state<br/>Event bus, QueryClient"]
+        LibUtils["libs/shared-utils<br/>Utilities"]
         LibContracts["libs/contracts<br/>Pact contracts"]
     end
 
@@ -35,7 +43,8 @@ graph TB
         LS["LocalStack<br/>:4566"]
     end
 
-    SPA -->|:5173| BFF
+    SHELL -->|:5173| BFF
+    SHELL --> MFE_H & MFE_C & MFE_B & MFE_A
     BFF -->|:3000 → :5050| API
     API --> PG
     API --> Redis
@@ -58,11 +67,19 @@ npx create-nx-workspace@latest employee-budget-allocation \
 ```
 employee_budget_allocation/
 ├── apps/
-│   ├── web/                    # React SPA (Vite + TS)
+│   ├── shell/                   # Host React app (Module Federation host)
+│   ├── mfe-hierarchy/           # Org tree visualization MFE
+│   ├── mfe-compensation/        # Compensation management MFE
+│   ├── mfe-budget/              # Budget allocation MFE
+│   ├── mfe-admin/               # HR admin MFE (employee CRUD, CSV import)
 │   ├── bff/                    # NestJS BFF
 │   └── api/                    # .NET 9 Web API
 ├── libs/
+│   ├── shared-ui/              # Shared UI components (design system)
 │   ├── shared-types/           # Shared TS interfaces (DTOs, enums)
+│   ├── shared-auth/            # Auth0 context provider, hooks, guards
+│   ├── shared-state/           # Event bus, shared TanStack Query client
+│   ├── shared-utils/           # Common utilities (formatting, validation)
 │   └── contracts/              # Pact contract files
 ├── infra/
 │   └── terraform/              # Phase 8
@@ -80,7 +97,7 @@ employee_budget_allocation/
 ├── docker/
 │   ├── docker-compose.yml
 │   ├── docker-compose.override.yml
-│   ├── Dockerfile.web
+│   ├── Dockerfile.shell
 │   ├── Dockerfile.bff
 │   └── Dockerfile.api
 ├── scripts/
@@ -92,7 +109,8 @@ employee_budget_allocation/
 │       ├── deploy-test.yml     # develop → test (direct deploy)
 │       ├── deploy-beta.yml     # release/* → beta (canary 50%→100%)
 │       ├── deploy-prod.yml     # main → prod (canary + approval gate)
-│       └── db-migrate.yml      # Manual migration (test/beta/prod)
+│       ├── deploy-mfe.yml     # Independent MFE deploy to S3
+│       └── db-migrate.yml     # Manual migration (test/beta/prod)
 ├── .husky/
 │   ├── pre-commit
 │   └── commit-msg
@@ -106,31 +124,58 @@ employee_budget_allocation/
 └── README.md
 ```
 
-### 1.2 — Scaffold React SPA
+### 1.2 — Scaffold Shell + Micro Frontends
 
 ```bash
 cd apps/
-npx create-vite web --template react-ts
+npx create-vite shell --template react-ts
+npx create-vite mfe-hierarchy --template react-ts
+npx create-vite mfe-compensation --template react-ts
+npx create-vite mfe-budget --template react-ts
+npx create-vite mfe-admin --template react-ts
 ```
+
+Each MFE uses `@module-federation/vite` to expose a `remoteEntry.js`. The shell app is the Module Federation host that dynamically loads MFEs at runtime.
 
 **Key files to create/modify:**
 
 | File | Purpose |
 |------|---------|
-| `apps/web/vite.config.ts` | Dev server proxy to BFF `:3000` |
-| `apps/web/tsconfig.json` | Extend `tsconfig.base.json`, path aliases |
-| `apps/web/src/main.tsx` | Entry point with Auth0Provider |
-| `apps/web/src/app/App.tsx` | Router shell |
-| `apps/web/.env.example` | `VITE_AUTH0_DOMAIN`, `VITE_AUTH0_CLIENT_ID`, `VITE_API_BASE_URL`, `VITE_SPLIT_KEY` |
+| `apps/shell/vite.config.ts` | Module Federation host config, dev server proxy to BFF `:3000` |
+| `apps/shell/tsconfig.json` | Extend `tsconfig.base.json`, path aliases |
+| `apps/shell/src/main.tsx` | Entry point with Auth0Provider (from `libs/shared-auth`) |
+| `apps/shell/src/app/App.tsx` | Router shell with lazy MFE loading + error boundaries |
+| `apps/shell/.env.example` | `VITE_AUTH0_DOMAIN`, `VITE_AUTH0_CLIENT_ID`, `VITE_API_BASE_URL`, `VITE_SPLIT_KEY` |
+| `apps/mfe-*/vite.config.ts` | Module Federation remote config, exposes `./Module` entry |
+| `apps/mfe-*/src/bootstrap.tsx` | Async bootstrap for Module Federation |
 
-`apps/web/vite.config.ts`:
+`apps/shell/vite.config.ts`:
 ```typescript
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { federation } from '@module-federation/vite';
 import path from 'path';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    federation({
+      name: 'shell',
+      remotes: {
+        mfeHierarchy: 'mfeHierarchy@http://localhost:5174/remoteEntry.js',
+        mfeCompensation: 'mfeCompensation@http://localhost:5175/remoteEntry.js',
+        mfeBudget: 'mfeBudget@http://localhost:5176/remoteEntry.js',
+        mfeAdmin: 'mfeAdmin@http://localhost:5177/remoteEntry.js',
+      },
+      shared: {
+        react: { singleton: true, requiredVersion: '^19.0.0' },
+        'react-dom': { singleton: true, requiredVersion: '^19.0.0' },
+        'react-router-dom': { singleton: true },
+        '@tanstack/react-query': { singleton: true },
+        '@auth0/auth0-react': { singleton: true },
+      },
+    }),
+  ],
   server: {
     port: 5173,
     proxy: {
@@ -324,8 +369,20 @@ logs:
 	docker compose -f docker/docker-compose.yml logs -f
 
 # ── Dev Servers ───────────────────────────
-dev-web:
-	cd apps/web && pnpm dev
+dev-shell:
+	cd apps/shell && pnpm dev
+
+dev-mfe-hierarchy:
+	cd apps/mfe-hierarchy && pnpm dev --port 5174
+
+dev-mfe-compensation:
+	cd apps/mfe-compensation && pnpm dev --port 5175
+
+dev-mfe-budget:
+	cd apps/mfe-budget && pnpm dev --port 5176
+
+dev-mfe-admin:
+	cd apps/mfe-admin && pnpm dev --port 5177
 
 dev-bff:
 	cd apps/bff && pnpm start:dev
@@ -334,7 +391,7 @@ dev-api:
 	cd apps/api/src/Api && dotnet watch run
 
 dev: up
-	@$(MAKE) -j3 dev-web dev-bff dev-api
+	@$(MAKE) -j7 dev-shell dev-mfe-hierarchy dev-mfe-compensation dev-mfe-budget dev-mfe-admin dev-bff dev-api
 
 # ── Quality ───────────────────────────────
 lint:
@@ -454,12 +511,14 @@ npx --no -- commitlint --edit "$1"
 module.exports = {
   extends: ['@commitlint/config-conventional'],
   rules: {
-    'scope-enum': [2, 'always', ['web', 'bff', 'api', 'infra', 'ci', 'deps', 'docs']],
+    'scope-enum': [2, 'always', ['shell', 'mfe-hierarchy', 'mfe-compensation', 'mfe-budget', 'mfe-admin', 'bff', 'api', 'shared-ui', 'shared-types', 'shared-auth', 'shared-state', 'shared-utils', 'contracts', 'infra', 'ci', 'deps', 'docs']],
   },
 };
 ```
 
-### 1.9 — Shared Types Library
+### 1.9 — Shared Libraries
+
+**`libs/shared-types/`** — Shared TypeScript interfaces and DTOs:
 
 `libs/shared-types/src/index.ts`:
 ```typescript
@@ -495,13 +554,29 @@ export interface EmployeeDto {
 }
 ```
 
+**`libs/shared-auth/`** — Auth0 context provider shared across all MFEs:
+- Exports `Auth0ProviderWithConfig`, `useAuth`, `AuthGuard` components
+- Singleton via Module Federation — never bundled per MFE
+
+**`libs/shared-state/`** — Cross-MFE communication:
+- Exports shared TanStack Query client (singleton)
+- Exports custom event bus for MFE-to-MFE communication
+- No direct imports between MFEs — all communication via this lib
+
+**`libs/shared-ui/`** — Design system components:
+- Shared UI primitives (buttons, tables, modals, form fields)
+- Consistent theming across all MFEs
+
+**`libs/shared-utils/`** — Common utilities:
+- Currency/number formatting, date helpers, validation utilities
+
 ## Acceptance Tests
 
 | # | Test | Verification |
 |---|------|-------------|
 | 1 | Fresh clone builds | `git clone && pnpm install && make build` succeeds |
 | 2 | Docker infra starts | `make up` → `pg_isready` and `redis-cli ping` return OK |
-| 3 | All services start | `make dev` → web on `:5173`, bff on `:3000`, api on `:5050` |
+| 3 | All services start | `make dev` → shell on `:5173`, MFEs on `:5174-5177`, bff on `:3000`, api on `:5050` |
 | 4 | Health checks pass | `curl localhost:3000/health` and `curl localhost:5050/healthz` return 200 |
 | 5 | Lint blocks bad code | Introduce lint error → `make lint` fails |
 | 6 | Commit msg validated | `git commit -m "bad"` is rejected by commitlint |

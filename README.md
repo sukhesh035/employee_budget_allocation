@@ -39,18 +39,23 @@ All data is governed by role-based access controls — employees only see compen
 
 ## Architecture Overview
 
-The platform follows a **Backend-for-Frontend (BFF)** pattern. The React SPA communicates exclusively with a NestJS BFF, which orchestrates calls to the .NET core API. This separation enables independent scaling, security boundary enforcement, and frontend-optimized response shaping.
+The platform uses a **Module Federation micro frontend** architecture with a **Backend-for-Frontend (BFF)** pattern. A shell app dynamically loads four domain-aligned micro frontends (hierarchy, compensation, budget, admin) at runtime via `remoteEntry.js`. All MFEs communicate exclusively with the NestJS BFF, which orchestrates calls to the .NET core API. Each MFE builds and deploys independently, enabling independent team ownership, fault isolation, and per-MFE canary deployments.
 
 > Full architecture design spec: [`docs/superpowers/specs/`](docs/superpowers/specs/)
 
 ```mermaid
 graph LR
-    subgraph Client
-        A[React SPA]
+    subgraph Client["Client (Module Federation)"]
+        S[Shell App]
+        M1[MFE Hierarchy]
+        M2[MFE Compensation]
+        M3[MFE Budget]
+        M4[MFE Admin]
+        S --> M1 & M2 & M3 & M4
     end
 
     subgraph Edge
-        B[API Gateway / CDN]
+        B[CloudFront CDN]
     end
 
     subgraph Backend
@@ -67,13 +72,13 @@ graph LR
         G[Auth0]
     end
 
-    A -->|HTTPS| B
+    S -->|HTTPS| B
     B --> C
     C --> D
     D --> E
     D --> F
     C -.->|Token validation| G
-    A -.->|OIDC login| G
+    S -.->|OIDC login| G
 ```
 
 ---
@@ -82,7 +87,7 @@ graph LR
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| Frontend | React 19, TypeScript 5.7, Vite 6 | Single-page application |
+| Frontend | React 19, TypeScript 5.7, Vite 6, Module Federation | Micro frontend shell + 4 domain MFEs |
 | UI Components | Ant Design / Tailwind CSS | Component library and styling |
 | BFF | NestJS 11, TypeScript | Backend-for-Frontend, API orchestration |
 | API | .NET 9, C# 13 | Core business logic and domain services |
@@ -103,24 +108,32 @@ graph LR
 ```
 employee_budget_allocation/
 ├── apps/
-│   ├── web/                  # React SPA (Vite + TypeScript)
-│   ├── bff/                  # NestJS BFF
-│   └── api/                  # .NET 9 API
+│   ├── shell/                 # Host React app (layout, navigation, auth, routing)
+│   ├── mfe-hierarchy/         # Org tree visualization micro frontend
+│   ├── mfe-compensation/      # Compensation management micro frontend
+│   ├── mfe-budget/            # Budget allocation & tracking micro frontend
+│   ├── mfe-admin/             # HR admin micro frontend (employee CRUD, CSV import)
+│   ├── bff/                   # NestJS BFF
+│   └── api/                   # .NET 9 API (separate repo)
 ├── libs/
-│   ├── shared-types/         # Shared TypeScript types
-│   └── contracts/            # Pact contract tests
+│   ├── shared-ui/             # Shared UI components (design system)
+│   ├── shared-types/          # Shared TypeScript types/interfaces
+│   ├── shared-auth/           # Auth0 context provider, hooks, guards
+│   ├── shared-state/          # Event bus, shared TanStack Query client
+│   ├── shared-utils/          # Common utilities (formatting, validation)
+│   └── contracts/             # Pact contract tests
 ├── infra/
-│   └── terraform/            # AWS infrastructure
+│   └── terraform/             # AWS infrastructure
 ├── k8s/
-│   ├── base/                 # Base Kubernetes manifests
-│   └── overlays/             # Environment-specific overlays
+│   ├── base/                  # Base Kubernetes manifests
+│   └── overlays/              # Environment-specific overlays
 ├── docs/
-│   ├── superpowers/specs/    # Architecture design spec
-│   ├── phases/               # Implementation phase plans
-│   ├── adr/                  # Architecture Decision Records
-│   └── diagrams/             # Architecture diagrams
-├── scripts/                  # Seed data, CLI tools
-├── .github/workflows/        # CI/CD pipelines
+│   ├── superpowers/specs/     # Architecture design spec
+│   ├── phases/                # Implementation phase plans
+│   ├── adr/                   # Architecture Decision Records
+│   └── diagrams/              # Architecture diagrams
+├── scripts/                   # Seed data, CLI tools
+├── .github/workflows/         # CI/CD pipelines
 ├── docker-compose.yml
 ├── Makefile
 └── nx.json
@@ -234,6 +247,7 @@ The project follows an **8-phase implementation plan** documented in [`docs/phas
 | `deploy-test.yml` | Merge to `develop` | Build images → push ECR → deploy to test EKS (direct rollout) |
 | `deploy-beta.yml` | Merge to `release/*` or manual dispatch | Build images → push ECR → deploy to beta EKS (canary 50→100) |
 | `deploy-prod.yml` | Merge to `main` or manual dispatch | Build images → push ECR → deploy to prod EKS (canary 20→40→80→100) — requires manual approval |
+| `deploy-mfe.yml` | Manual dispatch (select MFE + env) | Build selected MFE → upload to S3 (`s3://spa-bucket/{mfe}/`) → invalidate CloudFront |
 | `infra-{env}.yml` | Changes to `infra/terraform/environments/{env}/` | Terraform plan on PR, apply on merge |
 | `db-migrate.yml` | Manual dispatch (select environment) | Run EF Core migrations against selected environment's RDS |
 

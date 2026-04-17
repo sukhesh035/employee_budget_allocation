@@ -7,8 +7,9 @@ Provision production infrastructure on AWS with Terraform, deploy all services t
 ## Success Criteria
 
 - [ ] `terraform apply` provisions full environment (VPC, EKS, RDS, Redis, S3, ECR)
-- [ ] All 3 services deploy to EKS via Argo Rollouts canary
-- [ ] React SPA served via CloudFront + S3
+- [ ] All backend services (BFF, API) deploy to EKS via Argo Rollouts canary
+- [ ] Shell + MFEs served via CloudFront + S3 (per-MFE paths)
+- [ ] `deploy-mfe.yml` workflow builds and deploys individual MFEs using Nx affected
 - [ ] API Gateway routes to EKS with rate limiting
 - [ ] Secrets managed via AWS Secrets Manager + External Secrets Operator
 - [ ] CI/CD: 3-environment pipeline (test → beta → prod) with progressive canary
@@ -27,7 +28,7 @@ Provision production infrastructure on AWS with Terraform, deploy all services t
 graph TB
     subgraph "AWS Region (us-east-1)"
         CF["CloudFront"]
-        S3["S3 Bucket<br/>(React SPA)"]
+        S3["S3 Bucket<br/>(Shell + MFE Assets)"]
         APIGW["API Gateway"]
 
         subgraph "VPC"
@@ -113,10 +114,10 @@ infra/terraform/
 │   │   ├── main.tf          # ElastiCache Redis cluster
 │   │   ├── variables.tf
 │   │   └── outputs.tf
-│   ├── s3-cloudfront/
-│   │   ├── main.tf          # S3 bucket, CloudFront distribution, OAI
-│   │   ├── variables.tf
-│   │   └── outputs.tf
+    │   ├── s3-cloudfront/
+    │   │   ├── main.tf          # S3 bucket (shell + MFE paths), CloudFront distribution, OAI
+    │   │   ├── variables.tf
+    │   │   └── outputs.tf
 │   ├── ecr/
 │   │   ├── main.tf          # ECR repositories
 │   │   ├── variables.tf
@@ -546,17 +547,17 @@ jobs:
     needs: lint
     strategy:
       matrix:
-        service: [web, bff, api]
+        service: [shell, mfe-hierarchy, mfe-compensation, mfe-budget, mfe-admin, bff, api]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: make test-${{ matrix.service }}
 
-  build:
+  build-backend:
     needs: test
     strategy:
       matrix:
-        service: [web, bff, api]
+        service: [bff, api]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -566,11 +567,25 @@ jobs:
           aws-region: us-east-1
       - uses: aws-actions/amazon-ecr-login@v2
         id: ecr
-      - name: Build and push
+      - name: Build and push Docker image
         run: |
           IMAGE=${{ steps.ecr.outputs.registry }}/eba-${{ matrix.service }}:${{ github.sha }}
           docker build -t $IMAGE -f docker/Dockerfile.${{ matrix.service }} .
           docker push $IMAGE
+
+  build-frontend:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+      - run: pnpm install --frozen-lockfile
+      - name: Build Shell + MFEs (Nx affected)
+        run: pnpm nx affected --target=build --projects=shell,mfe-*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mfe-dist
+          path: dist/apps/
 ```
 
 **`.github/workflows/deploy-test.yml`:**
@@ -597,9 +612,11 @@ jobs:
       - name: Update kubeconfig
         run: aws eks update-kubeconfig --name eba-test --region us-east-1
 
-      - name: Deploy SPA to S3
+      - name: Deploy Shell + MFEs to S3
         run: |
-          aws s3 sync apps/web/dist/ s3://eba-test-spa --delete
+          for app in shell mfe-hierarchy mfe-compensation mfe-budget mfe-admin; do
+            aws s3 sync dist/apps/$app/ s3://eba-test-mfe/$app/ --delete
+          done
           aws cloudfront create-invalidation --distribution-id ${{ secrets.CF_DIST_ID }} --paths "/*"
 
       - name: Deploy BFF (direct rollout)
@@ -645,9 +662,11 @@ jobs:
       - name: Update kubeconfig
         run: aws eks update-kubeconfig --name eba-beta --region us-east-1
 
-      - name: Deploy SPA to S3
+      - name: Deploy Shell + MFEs to S3
         run: |
-          aws s3 sync apps/web/dist/ s3://eba-beta-spa --delete
+          for app in shell mfe-hierarchy mfe-compensation mfe-budget mfe-admin; do
+            aws s3 sync dist/apps/$app/ s3://eba-beta-mfe/$app/ --delete
+          done
           aws cloudfront create-invalidation --distribution-id ${{ secrets.CF_DIST_ID }} --paths "/*"
 
       - name: Deploy BFF (Argo Canary 50%→100%)
@@ -690,9 +709,11 @@ jobs:
       - name: Update kubeconfig
         run: aws eks update-kubeconfig --name eba-prod --region us-east-1
 
-      - name: Deploy SPA to S3
+      - name: Deploy Shell + MFEs to S3
         run: |
-          aws s3 sync apps/web/dist/ s3://eba-prod-spa --delete
+          for app in shell mfe-hierarchy mfe-compensation mfe-budget mfe-admin; do
+            aws s3 sync dist/apps/$app/ s3://eba-prod-mfe/$app/ --delete
+          done
           aws cloudfront create-invalidation --distribution-id ${{ secrets.CF_DIST_ID }} --paths "/*"
 
       - name: Deploy BFF (Argo Canary 20%→40%→80%→100% + analysis)
@@ -721,6 +742,66 @@ jobs:
             docker push ${{ secrets.ECR_REGISTRY }}/eba-$svc:prod-latest
             docker push ${{ secrets.ECR_REGISTRY }}/eba-$svc:v$VERSION
           done
+```
+
+**`.github/workflows/deploy-mfe.yml`:**
+```yaml
+name: Deploy MFEs
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [test, beta, prod]
+      mfe:
+        type: choice
+        description: "Which MFE to deploy (or 'all' for affected)"
+        options: [all, shell, mfe-hierarchy, mfe-compensation, mfe-budget, mfe-admin]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Needed for nx affected
+      - uses: pnpm/action-setup@v3
+      - run: pnpm install --frozen-lockfile
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Build MFEs
+        run: |
+          if [ "${{ inputs.mfe }}" = "all" ]; then
+            pnpm nx affected --target=build --projects=shell,mfe-*
+          else
+            pnpm nx build ${{ inputs.mfe }}
+          fi
+
+      - name: Deploy to S3
+        run: |
+          BUCKET="eba-${{ inputs.environment }}-mfe"
+          if [ "${{ inputs.mfe }}" = "all" ]; then
+            for app in shell mfe-hierarchy mfe-compensation mfe-budget mfe-admin; do
+              if [ -d "dist/apps/$app" ]; then
+                aws s3 sync dist/apps/$app/ s3://$BUCKET/$app/ --delete
+              fi
+            done
+          else
+            aws s3 sync dist/apps/${{ inputs.mfe }}/ s3://$BUCKET/${{ inputs.mfe }}/ --delete
+          fi
+
+      - name: Invalidate CloudFront
+        run: |
+          if [ "${{ inputs.mfe }}" = "all" ]; then
+            aws cloudfront create-invalidation --distribution-id ${{ secrets.CF_DIST_ID }} --paths "/*"
+          else
+            aws cloudfront create-invalidation --distribution-id ${{ secrets.CF_DIST_ID }} \
+              --paths "/${{ inputs.mfe }}/*"
+          fi
 ```
 
 **`.github/workflows/db-migrate.yml`:**
@@ -850,7 +931,7 @@ resource "aws_cloudwatch_metric_alarm" "api_5xx_rate" {
 |-----------|----------|-----|-----|
 | RDS PostgreSQL | Multi-AZ + automated backups (30 days) | < 5 min | < 15 min (auto-failover) |
 | ElastiCache Redis | Multi-AZ replicas, auto-failover | < 1 min | < 1 min |
-| S3 (SPA) | Versioning enabled, cross-region replication | 0 | 0 |
+| S3 (Shell + MFEs) | Versioning enabled, cross-region replication | 0 | 0 |
 | EKS | Multi-AZ node groups, PDB | N/A | < 5 min (pod rescheduling) |
 | Secrets Manager | Multi-region replication | 0 | 0 |
 
@@ -875,7 +956,7 @@ spec:
 | 2 | Infra provisions | `terraform apply` creates all resources |
 | 3 | EKS accessible | `kubectl get nodes` returns healthy nodes |
 | 4 | Services deploy | All rollouts complete successfully |
-| 5 | SPA accessible | CloudFront URL serves React app |
+| 5 | Shell + MFEs accessible | CloudFront URL serves shell, MFEs load dynamically |
 | 6 | API accessible | API Gateway routes to BFF correctly |
 | 7 | Canary works | Bad deploy auto-rolls back |
 | 8 | Secrets injected | Pods have correct env vars from Secrets Manager |
@@ -891,7 +972,7 @@ spec:
 | Terraform EKS + IRSA | 4h |
 | Terraform RDS + Proxy | 3h |
 | Terraform Redis | 1h |
-| Terraform S3 + CloudFront | 2h |
+| Terraform S3 + CloudFront (Shell + MFE paths) | 3h |
 | Terraform ECR + IAM + Secrets | 2h |
 | Terraform SNS/SQS | 1h |
 | Terraform observability | 2h |
@@ -899,9 +980,10 @@ spec:
 | External Secrets Operator | 2h |
 | Network policies + PDB + HPA | 2h |
 | GitHub Actions CI | 3h |
-| GitHub Actions CD | 3h |
+| GitHub Actions CD (backend + MFE deploy) | 4h |
+| MFE deploy workflow (deploy-mfe.yml) | 2h |
 | DB migration workflow | 1h |
 | OTel + Grafana dashboards | 4h |
 | CloudWatch alarms | 2h |
 | DR testing | 3h |
-| **Total** | **~42h** |
+| **Total** | **~46h** |

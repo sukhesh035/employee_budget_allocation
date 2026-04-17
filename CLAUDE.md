@@ -4,11 +4,19 @@
 
 Employee Budget Allocation Platform — a Workday-like enterprise application for managing organizational hierarchy, employee compensation, and budget allocation.
 
-**Architecture:** Monorepo with three services:
+**Architecture:** Two repos — a TypeScript monorepo (Nx 20) and a separate .NET repo:
 
-- **React SPA** (`apps/web`) — Single-page application frontend
+**TypeScript Monorepo (Nx 20) — Module Federation micro frontends:**
+- **Shell** (`apps/shell`) — Host React app (layout, navigation, auth, routing)
+- **MFE Hierarchy** (`apps/mfe-hierarchy`) — Org tree visualization micro frontend
+- **MFE Compensation** (`apps/mfe-compensation`) — Compensation management micro frontend
+- **MFE Budget** (`apps/mfe-budget`) — Budget allocation & tracking micro frontend
+- **MFE Admin** (`apps/mfe-admin`) — HR admin micro frontend (employee CRUD, CSV import)
 - **NestJS BFF** (`apps/bff`) — Backend-for-frontend, the ONLY public entry point
-- **.NET 9 API** (`apps/api`) — Internal API, never exposed publicly
+- **Shared libs** (`libs/`) — shared-ui, shared-types, shared-auth, shared-state, shared-utils, contracts
+
+**Separate Repo:**
+- **.NET 9 API** — Internal API (Clean Architecture), never exposed publicly
 
 **Infrastructure:** PostgreSQL 17 (with `ltree` extension for hierarchy), ElastiCache Redis 7.4 (Valkey compatible) for caching.
 
@@ -65,16 +73,47 @@ Employee Budget Allocation Platform — a Workday-like enterprise application fo
 - **Event-driven:** Domain events → transactional outbox → SNS → SQS → consumers.
 - **Feature flags:** Split.io SDK in both NestJS and .NET. Gate new features behind flags.
 
+## Micro Frontend Rules
+
+- **No direct imports between MFEs.** MFEs communicate only via the shared event bus (`libs/shared-state`) or shared Auth0 context (`libs/shared-auth`).
+- **Shared singletons:** `react`, `react-dom`, `react-router-dom`, `@tanstack/react-query`, `@auth0/auth0-react` are shared via Module Federation — never bundle these per MFE.
+- **Independent deployability:** Each MFE builds and deploys independently to its own S3 path. Shell loads MFEs dynamically via `remoteEntry.js`.
+- **Fault isolation:** If an MFE fails to load, the shell must render a fallback error boundary — never crash the entire app.
+
 ## File Structure Quick Reference
 
 ```
-apps/web/src/
-  components/        # Shared UI components
-  features/          # Feature modules (hierarchy/, compensation/, budget/)
-  hooks/             # Custom React hooks
-  services/          # API client layer
-  store/             # State management
-  types/             # TypeScript types
+apps/shell/src/
+  components/        # Layout, navigation, error boundaries
+  config/            # Module Federation remote config
+  routes/            # Top-level routing, lazy MFE loading
+
+apps/mfe-hierarchy/src/
+  components/        # Org tree visualization
+  hooks/             # Hierarchy-specific hooks
+  services/          # BFF API client for hierarchy
+
+apps/mfe-compensation/src/
+  components/        # Compensation views, history tables
+  hooks/             # Compensation-specific hooks
+  services/          # BFF API client for compensation
+
+apps/mfe-budget/src/
+  components/        # Budget allocation, utilization dashboards
+  hooks/             # Budget-specific hooks
+  services/          # BFF API client for budget
+
+apps/mfe-admin/src/
+  components/        # Employee CRUD, CSV import
+  hooks/             # Admin-specific hooks
+  services/          # BFF API client for admin
+
+libs/shared-ui/     # Shared UI components (design system)
+libs/shared-types/  # Shared TypeScript types/interfaces
+libs/shared-auth/   # Auth0 context provider, hooks, guards
+libs/shared-state/  # Event bus, shared TanStack Query client
+libs/shared-utils/  # Common utilities (formatting, validation)
+libs/contracts/     # Pact contract tests
 
 apps/bff/src/
   modules/           # NestJS modules (hierarchy/, employee/, budget/, auth/)

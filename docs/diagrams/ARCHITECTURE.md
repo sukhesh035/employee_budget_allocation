@@ -39,8 +39,13 @@ All external traffic enters through the NestJS BFF. The .NET API is never public
 flowchart TB
     USER["Browser"]
 
-    subgraph Frontend
-        SPA["React SPA\n(TypeScript, TanStack Query v5)\nServed from S3/CloudFront"]
+    subgraph Frontend ["Frontend (Module Federation)"]
+        SHELL["Shell App\n(Layout, routing, error boundaries)\nServed from S3/CloudFront"]
+        MFE1["MFE Hierarchy\n(Org tree visualization)"]
+        MFE2["MFE Compensation\n(Compensation management)"]
+        MFE3["MFE Budget\n(Budget allocation & tracking)"]
+        MFE4["MFE Admin\n(Employee CRUD, CSV import)"]
+        SHELL --> MFE1 & MFE2 & MFE3 & MFE4
     end
 
     subgraph Backend ["Backend (EKS)"]
@@ -59,8 +64,8 @@ flowchart TB
         SQS["SQS\n(Fan-out queues + DLQ)"]
     end
 
-    USER -->|HTTPS| SPA
-    SPA -->|HTTPS REST| BFF
+    USER -->|HTTPS| SHELL
+    SHELL -->|HTTPS REST| BFF
     BFF -->|HTTP + HMAC headers| API
     BFF -->|GET/SET| REDIS
     API -->|EF Core| PG
@@ -68,7 +73,7 @@ flowchart TB
     SNS -->|Fan-out| SQS
     SQS -->|Consume| API
     API -->|Presigned URL| S3
-    SPA -->|Upload| S3
+    SHELL -->|Upload| S3
 ```
 
 ---
@@ -82,7 +87,7 @@ flowchart TB
     INET["Internet"]
     WAF["AWS WAF"]
     CF["CloudFront CDN"]
-    S3_STATIC["S3\n(React SPA static assets)"]
+    S3_STATIC["S3\n(MFE static assets:\nshell/, mfe-hierarchy/,\nmfe-compensation/, mfe-budget/,\nmfe-admin/)"]
     APIGW["API Gateway"]
 
     subgraph VPC ["VPC (10.0.0.0/16)"]
@@ -128,7 +133,7 @@ PKCE flow with Auth0, followed by JWT validation at BFF and HMAC-signed internal
 ```mermaid
 sequenceDiagram
     actor User
-    participant SPA as React SPA
+    participant SPA as Shell + MFE
     participant Auth0
     participant BFF as NestJS BFF
     participant API as .NET API
@@ -165,7 +170,7 @@ Cache-aside pattern: check Redis first, fall through to the .NET API on miss, po
 ```mermaid
 sequenceDiagram
     actor User
-    participant SPA as React SPA
+    participant SPA as Shell + MFE
     participant BFF as NestJS BFF
     participant Redis as ElastiCache Redis
     participant API as .NET API
@@ -195,7 +200,7 @@ Compensation records are append-only. After the write, a domain event is publish
 ```mermaid
 sequenceDiagram
     actor HR as HR Admin
-    participant SPA as React SPA
+    participant SPA as Shell + MFE
     participant BFF as NestJS BFF
     participant API as .NET API
     participant DB as PostgreSQL
@@ -242,7 +247,7 @@ Large CSV imports use S3 presigned URLs to avoid BFF memory pressure. An S3 even
 ```mermaid
 sequenceDiagram
     actor HR as HR Admin
-    participant SPA as React SPA
+    participant SPA as Shell + MFE
     participant BFF as NestJS BFF
     participant API as .NET API
     participant S3
