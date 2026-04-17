@@ -2280,7 +2280,7 @@ flowchart TB
         subgraph Services["Application Services (hot-reload)"]
             SPA["Shell App<br/>Webpack dev server<br/>:4200<br/>Loads MFEs via Module Federation"]
             BFF["NestJS BFF<br/>ts-node-dev --respawn<br/>:3000<br/>Volume mount: ./apps/bff/src"]
-            DOTNET[".NET 9 API<br/>dotnet watch<br/>:8080<br/>Volume mount: ./apps/api"]
+            DOTNET[".NET 9 API<br/>dotnet watch<br/>:8080<br/>Volume mount: ../employee_budget_allocation_api"]
         end
 
         subgraph Infra["Infrastructure Services"]
@@ -2309,7 +2309,7 @@ flowchart TB
 |---------|------|-----------|-------------|
 | Shell + MFEs | Webpack HMR (Module Federation) | Volume mount `./apps/shell/src` + `./apps/mfe-*/src` | < 500ms |
 | NestJS BFF | `ts-node-dev --respawn` | Volume mount `./apps/bff/src`, process restart on change | < 2s |
-| .NET 9 API | `dotnet watch` | Volume mount `./apps/api`, incremental rebuild | < 3s |
+| .NET 9 API | `dotnet watch` | Volume mount `../employee_budget_allocation_api`, incremental rebuild | < 3s |
 
 ### 16.3 Seed Data CLI
 

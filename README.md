@@ -39,7 +39,7 @@ All data is governed by role-based access controls — employees only see compen
 
 ## Architecture Overview
 
-The platform uses a **Module Federation micro frontend** architecture with a **Backend-for-Frontend (BFF)** pattern. A shell app dynamically loads four domain-aligned micro frontends (hierarchy, compensation, budget, admin) at runtime via `remoteEntry.js`. All MFEs communicate exclusively with the NestJS BFF, which orchestrates calls to the .NET core API. Each MFE builds and deploys independently, enabling independent team ownership, fault isolation, and per-MFE canary deployments.
+The platform uses a **Module Federation micro frontend** architecture with a **Backend-for-Frontend (BFF)** pattern, organized across **two repositories**: a TypeScript monorepo (Nx 20) containing the React shell, four domain MFEs, NestJS BFF, and shared libraries; and a separate .NET 9 API repo. A shell app dynamically loads four domain-aligned micro frontends (hierarchy, compensation, budget, admin) at runtime via `remoteEntry.js`. All MFEs communicate exclusively with the NestJS BFF, which orchestrates calls to the .NET core API. Each MFE builds and deploys independently, enabling independent team ownership, fault isolation, and per-MFE canary deployments.
 
 > Full architecture design spec: [`docs/superpowers/specs/`](docs/superpowers/specs/)
 
@@ -97,13 +97,15 @@ graph LR
 | Feature Flags | Split.io | Progressive rollout |
 | Infrastructure | Terraform, AWS (EKS) | Cloud provisioning |
 | Orchestration | Kubernetes, Argo Rollouts | Container orchestration, canary deploys |
-| Monorepo | Nx 20 | Build orchestration, dependency graph |
+| Monorepo | Nx 20 | Build orchestration for React + NestJS (TypeScript only) |
 | CI/CD | GitHub Actions | Automated build, test, deploy |
 | Contract Testing | Pact 5 (pact-js v13) | Consumer-driven contract tests |
 
 ---
 
 ## Project Structure
+
+### TypeScript Monorepo (Nx 20) — `employee_budget_allocation`
 
 ```
 employee_budget_allocation/
@@ -113,8 +115,7 @@ employee_budget_allocation/
 │   ├── mfe-compensation/      # Compensation management micro frontend
 │   ├── mfe-budget/            # Budget allocation & tracking micro frontend
 │   ├── mfe-admin/             # HR admin micro frontend (employee CRUD, CSV import)
-│   ├── bff/                   # NestJS BFF
-│   └── api/                   # .NET 9 API (separate repo)
+│   └── bff/                   # NestJS BFF
 ├── libs/
 │   ├── shared-ui/             # Shared UI components (design system)
 │   ├── shared-types/          # Shared TypeScript types/interfaces
@@ -137,6 +138,22 @@ employee_budget_allocation/
 ├── docker-compose.yml
 ├── Makefile
 └── nx.json
+```
+
+### .NET 9 API (Separate Repo) — `employee_budget_allocation_api`
+
+```
+employee_budget_allocation_api/
+├── src/
+│   ├── Api/                   # Web host, controllers, middleware, health checks
+│   ├── Application/           # CQRS commands, queries, handlers, validators
+│   ├── Domain/                # Entities, value objects, domain events
+│   └── Infrastructure/        # EF Core, repositories, SNS publisher, Redis
+├── tests/
+│   ├── Api.UnitTests/
+│   ├── Api.IntegrationTests/
+│   └── Api.ArchitectureTests/
+└── EmployeeBudgetAllocation.sln
 ```
 
 ---

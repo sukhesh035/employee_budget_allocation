@@ -306,7 +306,7 @@ export class ApiProxyService {
 
 ### 3.5 — .NET HMAC Verification & Authorization Policies
 
-**`apps/api/src/Api/Middleware/HmacVerificationMiddleware.cs`:**
+**`src/Api/Middleware/HmacVerificationMiddleware.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class HmacVerificationMiddleware
 {
@@ -362,7 +362,7 @@ public class HmacVerificationMiddleware
 }
 ```
 
-**`apps/api/src/Api/Authorization/Policies.cs`:**
+**`src/Api/Authorization/Policies.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public static class AuthorizationPolicies
 {
@@ -387,7 +387,7 @@ public static class AuthorizationPolicies
 
 ### 3.6 — PostgreSQL RLS Policies
 
-**Migration SQL — `apps/api/src/Infrastructure/Persistence/Migrations/sql/rls_policies.sql`:**
+**Migration SQL — `src/Infrastructure/Persistence/Migrations/sql/rls_policies.sql`** *(employee_budget_allocation_api repo)*:
 ```sql
 -- Enable RLS on sensitive tables
 ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
@@ -456,7 +456,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE ON TABLES
 -- Done in DbContext interceptor
 ```
 
-**`apps/api/src/Infrastructure/Persistence/Interceptors/RlsInterceptor.cs`:**
+**`src/Infrastructure/Persistence/Interceptors/RlsInterceptor.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class RlsConnectionInterceptor : DbConnectionInterceptor
 {

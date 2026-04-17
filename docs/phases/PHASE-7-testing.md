@@ -45,11 +45,11 @@ graph TB
 
 ### 7.1 — Unit Tests (.NET)
 
-**Test project: `apps/api/tests/Api.UnitTests/`**
+**Test project: `tests/Api.UnitTests/`** *(employee_budget_allocation_api repo)*
 
 **CQRS Handler Tests:**
 
-`apps/api/tests/Api.UnitTests/Application/Commands/CreateEmployeeHandlerTests.cs`:
+`tests/Api.UnitTests/Application/Commands/CreateEmployeeHandlerTests.cs` *(employee_budget_allocation_api repo)*:
 ```csharp
 public class CreateEmployeeHandlerTests
 {
@@ -104,7 +104,7 @@ public class CreateEmployeeHandlerTests
 
 **RBAC Logic Tests:**
 
-`apps/api/tests/Api.UnitTests/Authorization/PolicyTests.cs`:
+`tests/Api.UnitTests/Authorization/PolicyTests.cs` *(employee_budget_allocation_api repo)*:
 ```csharp
 public class PolicyTests
 {
@@ -210,7 +210,7 @@ describe('FieldFilterService', () => {
 
 ### 7.3 — Integration Tests
 
-**`apps/api/tests/Api.IntegrationTests/` using Testcontainers:**
+**`tests/Api.IntegrationTests/`** *(employee_budget_allocation_api repo)* **using Testcontainers:**
 
 ```csharp
 public class IntegrationTestBase : IAsyncLifetime
@@ -384,7 +384,7 @@ describe('Employee API Contract', () => {
 });
 ```
 
-**Provider side (.NET) — `apps/api/tests/Api.ContractTests/PactProviderTests.cs`:**
+**Provider side (.NET) — `tests/Api.ContractTests/PactProviderTests.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class PactProviderTests : IClassFixture<WebApplicationFactory<Program>>
 {
@@ -556,7 +556,7 @@ export const options = {
 
 ### 7.7 — Coverage Configuration
 
-**.NET — `apps/api/tests/coverlet.runsettings`:**
+**.NET — `tests/coverlet.runsettings`** *(employee_budget_allocation_api repo)*:
 ```xml
 <RunSettings>
   <DataCollectionRunSettings>
@@ -618,8 +618,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '9.0' }
+      # Points to employee_budget_allocation_api repo (checked out separately)
       - run: dotnet test --settings tests/coverlet.runsettings --collect:"XPlat Code Coverage"
-        working-directory: apps/api
+        working-directory: employee_budget_allocation_api
       - uses: codecov/codecov-action@v4
 
   test-bff:
@@ -643,8 +644,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: pnpm --filter bff test:pact
+      # Points to employee_budget_allocation_api repo (checked out separately)
       - run: dotnet test --filter "Category=Contract"
-        working-directory: apps/api
+        working-directory: employee_budget_allocation_api
 
   e2e:
     needs: [test-api, test-bff, test-web]

@@ -124,7 +124,7 @@ erDiagram
 <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.*" />
 ```
 
-**`apps/api/src/Infrastructure/Persistence/AppDbContext.cs`:**
+**`src/Infrastructure/Persistence/AppDbContext.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class AppDbContext : DbContext
 {
@@ -155,7 +155,7 @@ public class AppDbContext : DbContext
 
 ### 2.2 — Domain Entities
 
-**`apps/api/src/Domain/Entities/Employee.cs`:**
+**`src/Domain/Entities/Employee.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class Employee
 {
@@ -187,7 +187,7 @@ public class Employee
 }
 ```
 
-**`apps/api/src/Domain/Entities/CompensationRecord.cs`:**
+**`src/Domain/Entities/CompensationRecord.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class CompensationRecord
 {
@@ -206,7 +206,7 @@ public class CompensationRecord
 }
 ```
 
-**`apps/api/src/Domain/Entities/Department.cs`:**
+**`src/Domain/Entities/Department.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class Department
 {
@@ -228,7 +228,7 @@ public class Department
 
 ### 2.3 — EF Core Configurations
 
-**`apps/api/src/Infrastructure/Persistence/Configurations/EmployeeConfiguration.cs`:**
+**`src/Infrastructure/Persistence/Configurations/EmployeeConfiguration.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class EmployeeConfiguration : IEntityTypeConfiguration<Employee>
 {
@@ -266,7 +266,7 @@ public class EmployeeConfiguration : IEntityTypeConfiguration<Employee>
 }
 ```
 
-**`apps/api/src/Infrastructure/Persistence/Configurations/CompensationRecordConfiguration.cs`:**
+**`src/Infrastructure/Persistence/Configurations/CompensationRecordConfiguration.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class CompensationRecordConfiguration : IEntityTypeConfiguration<CompensationRecord>
 {
@@ -289,7 +289,7 @@ public class CompensationRecordConfiguration : IEntityTypeConfiguration<Compensa
 
 ### 2.4 — ltree Path Computation
 
-**`apps/api/src/Infrastructure/Persistence/Services/OrgPathService.cs`:**
+**`src/Infrastructure/Persistence/Services/OrgPathService.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class OrgPathService : IOrgPathService
 {
@@ -333,7 +333,7 @@ public class OrgPathService : IOrgPathService
 
 ### 2.5 — Materialized Views
 
-**`apps/api/src/Infrastructure/Persistence/Migrations/sql/create_materialized_views.sql`:**
+**`src/Infrastructure/Persistence/Migrations/sql/create_materialized_views.sql`** *(employee_budget_allocation_api repo)*:
 ```sql
 -- Department budget rollup (includes all descendant departments)
 CREATE MATERIALIZED VIEW mv_department_budget_rollup AS
@@ -408,7 +408,7 @@ GROUP BY m.id, m.employee_number, m.first_name, m.last_name, m.department_id;
 CREATE UNIQUE INDEX ON mv_manager_span (manager_id);
 ```
 
-**Refresh service — `apps/api/src/Infrastructure/Persistence/Services/MaterializedViewRefreshService.cs`:**
+**Refresh service — `src/Infrastructure/Persistence/Services/MaterializedViewRefreshService.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class MaterializedViewRefreshService : IMaterializedViewRefreshService
 {
@@ -440,27 +440,27 @@ public class MaterializedViewRefreshService : IMaterializedViewRefreshService
 
 | Handler | File | Purpose |
 |---------|------|---------|
-| `CreateEmployeeHandler` | `apps/api/src/Application/Commands/CreateEmployee/` | Create employee + initial comp record |
-| `UpdateEmployeeHandler` | `apps/api/src/Application/Commands/UpdateEmployee/` | Update non-comp fields |
-| `TransferEmployeeHandler` | `apps/api/src/Application/Commands/TransferEmployee/` | Change dept/manager, recompute paths |
-| `AddCompensationHandler` | `apps/api/src/Application/Commands/AddCompensation/` | Append compensation record |
-| `CreateDepartmentHandler` | `apps/api/src/Application/Commands/CreateDepartment/` | Create department node |
-| `SetBudgetHandler` | `apps/api/src/Application/Commands/SetBudget/` | Set department fiscal year budget |
-| `ImportEmployeesHandler` | `apps/api/src/Application/Commands/ImportEmployees/` | Bulk CSV import |
+| `CreateEmployeeHandler` | `src/Application/Commands/CreateEmployee/` | Create employee + initial comp record |
+| `UpdateEmployeeHandler` | `src/Application/Commands/UpdateEmployee/` | Update non-comp fields |
+| `TransferEmployeeHandler` | `src/Application/Commands/TransferEmployee/` | Change dept/manager, recompute paths |
+| `AddCompensationHandler` | `src/Application/Commands/AddCompensation/` | Append compensation record |
+| `CreateDepartmentHandler` | `src/Application/Commands/CreateDepartment/` | Create department node |
+| `SetBudgetHandler` | `src/Application/Commands/SetBudget/` | Set department fiscal year budget |
+| `ImportEmployeesHandler` | `src/Application/Commands/ImportEmployees/` | Bulk CSV import |
 
 **Queries:**
 
 | Handler | File | Purpose |
 |---------|------|---------|
-| `GetEmployeeByIdQuery` | `apps/api/src/Application/Queries/GetEmployeeById/` | Single employee + current comp |
-| `SearchEmployeesQuery` | `apps/api/src/Application/Queries/SearchEmployees/` | Trigram search with cursor pagination |
-| `GetOrgTreeQuery` | `apps/api/src/Application/Queries/GetOrgTree/` | Subtree from ltree root |
-| `GetDepartmentBudgetQuery` | `apps/api/src/Application/Queries/GetDepartmentBudget/` | From materialized view |
-| `GetManagerSpanQuery` | `apps/api/src/Application/Queries/GetManagerSpan/` | From materialized view |
-| `GetDirectReportsQuery` | `apps/api/src/Application/Queries/GetDirectReports/` | Immediate reports for a manager |
-| `GetCompensationHistoryQuery` | `apps/api/src/Application/Queries/GetCompHistory/` | All comp records for an employee |
+| `GetEmployeeByIdQuery` | `src/Application/Queries/GetEmployeeById/` | Single employee + current comp |
+| `SearchEmployeesQuery` | `src/Application/Queries/SearchEmployees/` | Trigram search with cursor pagination |
+| `GetOrgTreeQuery` | `src/Application/Queries/GetOrgTree/` | Subtree from ltree root |
+| `GetDepartmentBudgetQuery` | `src/Application/Queries/GetDepartmentBudget/` | From materialized view |
+| `GetManagerSpanQuery` | `src/Application/Queries/GetManagerSpan/` | From materialized view |
+| `GetDirectReportsQuery` | `src/Application/Queries/GetDirectReports/` | Immediate reports for a manager |
+| `GetCompensationHistoryQuery` | `src/Application/Queries/GetCompHistory/` | All comp records for an employee |
 
-**Example — `apps/api/src/Application/Queries/GetOrgTree/GetOrgTreeHandler.cs`:**
+**Example — `src/Application/Queries/GetOrgTree/GetOrgTreeHandler.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class GetOrgTreeHandler : IRequestHandler<GetOrgTreeQuery, OrgTreeDto>
 {
@@ -545,7 +545,7 @@ seed().catch(console.error);
 
 ### 2.8 — CSV Import Service
 
-**`apps/api/src/Application/Commands/ImportEmployees/ImportEmployeesHandler.cs`:**
+**`src/Application/Commands/ImportEmployees/ImportEmployeesHandler.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class ImportEmployeesHandler : IRequestHandler<ImportEmployeesCommand, ImportResult>
 {

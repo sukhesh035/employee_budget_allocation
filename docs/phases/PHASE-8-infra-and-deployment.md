@@ -541,7 +541,8 @@ jobs:
       - uses: pnpm/action-setup@v3
       - run: pnpm install --frozen-lockfile
       - run: pnpm nx run-many -t lint
-      - run: cd apps/api && dotnet format --verify-no-changes
+      # API_DIR points to the checked-out employee_budget_allocation_api repo
+      - run: cd ${{ env.API_DIR }} && dotnet format --verify-no-changes
 
   test:
     needs: lint
@@ -829,7 +830,8 @@ jobs:
           CONNECTION=$(aws secretsmanager get-secret-value \
             --secret-id eba/${{ inputs.environment }}/database \
             --query SecretString --output text | jq -r .connection_string)
-          cd apps/api/src/Infrastructure
+          # API_DIR points to the checked-out employee_budget_allocation_api repo
+          cd ${{ env.API_DIR }}/src/Infrastructure
           dotnet ef database update --connection "$CONNECTION" --startup-project ../Api
 ```
 

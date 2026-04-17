@@ -52,7 +52,7 @@ graph LR
 
 ### 4.1 — .NET API Endpoints
 
-**`apps/api/src/Api/Controllers/EmployeesController.cs`:**
+**`src/Api/Controllers/EmployeesController.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 [ApiController]
 [Route("v1/employees")]
@@ -151,7 +151,7 @@ public class EmployeesController : ControllerBase
 }
 ```
 
-**`apps/api/src/Api/Controllers/DepartmentsController.cs`:**
+**`src/Api/Controllers/DepartmentsController.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 [ApiController]
 [Route("v1/departments")]
@@ -194,7 +194,7 @@ public class DepartmentsController : ControllerBase
 }
 ```
 
-**`apps/api/src/Api/Controllers/ReportsController.cs`:**
+**`src/Api/Controllers/ReportsController.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 [ApiController]
 [Route("v1/reports")]
@@ -214,7 +214,7 @@ public class ReportsController : ControllerBase
 
 ### 4.2 — Cursor-Based Pagination
 
-**`apps/api/src/Application/Common/CursorPage.cs`:**
+**`src/Application/Common/CursorPage.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public record CursorPage<T>(
     List<T> Items,
@@ -242,7 +242,7 @@ public record CursorPaginationParams(
 
 ### 4.3 — RFC 7807 Error Responses
 
-**`apps/api/src/Api/Middleware/ExceptionHandlingMiddleware.cs`:**
+**`src/Api/Middleware/ExceptionHandlingMiddleware.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class ExceptionHandlingMiddleware
 {
@@ -316,7 +316,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
 
 **Install:** `dotnet add package FluentValidation.DependencyInjectionExtensions`
 
-**`apps/api/src/Application/Commands/CreateEmployee/CreateEmployeeValidator.cs`:**
+**`src/Application/Commands/CreateEmployee/CreateEmployeeValidator.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class CreateEmployeeValidator : AbstractValidator<CreateEmployeeCommand>
 {

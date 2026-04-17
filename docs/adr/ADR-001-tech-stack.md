@@ -24,7 +24,7 @@ We will use a three-tier architecture:
 
 1. **React SPA** (`apps/web`) -- Single-page application for the frontend, using TanStack Query v5 for server state management.
 2. **NestJS BFF** (`apps/bff`) -- Backend-for-frontend in TypeScript. This is the only publicly exposed service. It handles authentication (Auth0), RBAC enforcement, caching (Redis), and circuit-breaking before proxying requests to the internal API.
-3. **.NET 9 API** (`apps/api`) -- Internal API in C# following Clean Architecture. Handles domain logic, CQRS via MediatR 12, and data access via Entity Framework Core 9. Never exposed publicly.
+3. **.NET 9 API** (separate repo: `employee_budget_allocation_api`) -- Internal API in C# following Clean Architecture. Handles domain logic, CQRS via MediatR 12, and data access via Entity Framework Core 9. Never exposed publicly.
 4. **PostgreSQL 17** -- Primary database with the `ltree` extension for hierarchy queries and row-level security for data-layer RBAC enforcement.
 5. **ElastiCache Redis** -- Caching layer for hierarchy and compensation rollup queries.
 

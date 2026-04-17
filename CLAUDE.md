@@ -121,13 +121,20 @@ apps/bff/src/
   interceptors/      # Logging, caching, error handling
   pipes/             # Validation pipes
   config/            # Configuration module
+```
 
-apps/api/
-  src/
-    Domain/          # Entities, value objects, domain events
-    Application/     # CQRS commands, queries, handlers, validators
-    Infrastructure/  # EF Core, repositories, SNS publisher, Redis
-    Api/             # Controllers, middleware, health checks
+**Separate .NET Repo** (`employee_budget_allocation_api`):
+
+```
+src/
+  Domain/            # Entities, value objects, domain events
+  Application/       # CQRS commands, queries, handlers, validators
+  Infrastructure/    # EF Core, repositories, SNS publisher, Redis
+  Api/               # Controllers, middleware, health checks
+tests/
+  Api.UnitTests/
+  Api.IntegrationTests/
+  Api.ArchitectureTests/
 ```
 
 ## Environments

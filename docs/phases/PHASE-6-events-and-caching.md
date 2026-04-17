@@ -72,7 +72,7 @@ graph LR
 <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="9.*" />
 ```
 
-**`apps/api/src/Infrastructure/Caching/RedisCacheService.cs`:**
+**`src/Infrastructure/Caching/RedisCacheService.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class RedisCacheService : ICacheService
 {
@@ -151,7 +151,7 @@ public class GetEmployeeByIdHandler : IRequestHandler<GetEmployeeByIdQuery, Empl
 
 ### 6.2 — Domain Events
 
-**`apps/api/src/Domain/Events/DomainEvent.cs`:**
+**`src/Domain/Events/DomainEvent.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public abstract record DomainEvent
 {
@@ -172,7 +172,7 @@ public record OrgStructureChanged(Guid RootEmployeeId) : DomainEvent;
 
 ### 6.3 — Transactional Outbox Pattern
 
-**`apps/api/src/Domain/Entities/OutboxMessage.cs`:**
+**`src/Domain/Entities/OutboxMessage.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class OutboxMessage
 {
@@ -215,7 +215,7 @@ public class AddCompensationHandler : IRequestHandler<AddCompensationCommand, Co
 }
 ```
 
-**Outbox relay — `apps/api/src/Infrastructure/Messaging/OutboxRelayService.cs`:**
+**Outbox relay — `src/Infrastructure/Messaging/OutboxRelayService.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class OutboxRelayService : BackgroundService
 {
@@ -309,7 +309,7 @@ done
 
 ### 6.5 — Event Consumers
 
-**Materialized View Refresh Consumer — `apps/api/src/Infrastructure/Messaging/Consumers/MvRefreshConsumer.cs`:**
+**Materialized View Refresh Consumer — `src/Infrastructure/Messaging/Consumers/MvRefreshConsumer.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class MvRefreshConsumer : BackgroundService
 {
@@ -367,7 +367,7 @@ public class MvRefreshConsumer : BackgroundService
 }
 ```
 
-**Cache Invalidation Consumer — `apps/api/src/Infrastructure/Messaging/Consumers/CacheInvalidationConsumer.cs`:**
+**Cache Invalidation Consumer — `src/Infrastructure/Messaging/Consumers/CacheInvalidationConsumer.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class CacheInvalidationConsumer : BackgroundService
 {
@@ -422,7 +422,7 @@ public class CacheInvalidationConsumer : BackgroundService
 
 ### 6.6 — Dead Letter Queue Handling
 
-**`apps/api/src/Infrastructure/Messaging/DlqMonitorService.cs`:**
+**`src/Infrastructure/Messaging/DlqMonitorService.cs`** *(employee_budget_allocation_api repo)*:
 ```csharp
 public class DlqMonitorService : BackgroundService
 {

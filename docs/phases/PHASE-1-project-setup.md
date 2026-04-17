@@ -28,13 +28,16 @@ graph TB
         MFE_B["apps/mfe-budget<br/>Budget MFE"]
         MFE_A["apps/mfe-admin<br/>Admin MFE"]
         BFF["apps/bff<br/>NestJS"]
-        API["apps/api<br/>.NET 9 Web API"]
         LibUI["libs/shared-ui<br/>Design system"]
         LibTypes["libs/shared-types<br/>TS interfaces"]
         LibAuth["libs/shared-auth<br/>Auth0 context"]
         LibState["libs/shared-state<br/>Event bus, QueryClient"]
         LibUtils["libs/shared-utils<br/>Utilities"]
         LibContracts["libs/contracts<br/>Pact contracts"]
+    end
+
+    subgraph SeparateRepo["Separate Repo: employee_budget_allocation_api"]
+        API[".NET 9 Web API"]
     end
 
     subgraph DockerCompose["Docker Compose (local dev)"]
@@ -72,8 +75,7 @@ employee_budget_allocation/
 │   ├── mfe-compensation/        # Compensation management MFE
 │   ├── mfe-budget/              # Budget allocation MFE
 │   ├── mfe-admin/               # HR admin MFE (employee CRUD, CSV import)
-│   ├── bff/                    # NestJS BFF
-│   └── api/                    # .NET 9 Web API
+│   └── bff/                    # NestJS BFF
 ├── libs/
 │   ├── shared-ui/              # Shared UI components (design system)
 │   ├── shared-types/           # Shared TS interfaces (DTOs, enums)
@@ -237,10 +239,10 @@ dotnet new webapi -n Api -o api --framework net9.0
 dotnet new sln -n EmployeeBudgetAllocation -o api
 ```
 
-**Project structure inside `apps/api/`:**
+**.NET API repo** (`employee_budget_allocation_api`):
 
 ```
-apps/api/
+employee_budget_allocation_api/
 ├── src/
 │   ├── Api/                         # Web host, controllers, middleware
 │   │   ├── Api.csproj
@@ -270,7 +272,7 @@ apps/api/
 └── EmployeeBudgetAllocation.sln
 ```
 
-`apps/api/src/Api/Program.cs`:
+`src/Api/Program.cs` (in `employee_budget_allocation_api` repo):
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
 
@@ -355,6 +357,9 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 ```makefile
 .PHONY: up down lint test build clean seed
 
+# ── .NET API repo location ────────────────
+API_DIR ?= ../employee_budget_allocation_api
+
 # ── Local Dev ─────────────────────────────
 up:
 	docker compose -f docker/docker-compose.yml up -d
@@ -388,7 +393,7 @@ dev-bff:
 	cd apps/bff && pnpm start:dev
 
 dev-api:
-	cd apps/api/src/Api && dotnet watch run
+	cd $(API_DIR)/src/Api && dotnet watch run
 
 dev: up
 	@$(MAKE) -j7 dev-shell dev-mfe-hierarchy dev-mfe-compensation dev-mfe-budget dev-mfe-admin dev-bff dev-api
@@ -396,32 +401,32 @@ dev: up
 # ── Quality ───────────────────────────────
 lint:
 	pnpm nx run-many -t lint
-	cd apps/api && dotnet format --verify-no-changes
+	cd $(API_DIR) && dotnet format --verify-no-changes
 
 format:
 	pnpm nx run-many -t format
-	cd apps/api && dotnet format
+	cd $(API_DIR) && dotnet format
 
 test:
 	pnpm nx run-many -t test
-	cd apps/api && dotnet test
+	cd $(API_DIR) && dotnet test
 
 # ── Build ─────────────────────────────────
 build:
 	pnpm nx run-many -t build
-	cd apps/api && dotnet publish -c Release -o dist
+	cd $(API_DIR) && dotnet publish -c Release -o dist
 
 # ── Data ──────────────────────────────────
 seed:
 	pnpm tsx scripts/seed.ts
 
 migrate:
-	cd apps/api/src/Infrastructure && dotnet ef database update \
+	cd $(API_DIR)/src/Infrastructure && dotnet ef database update \
 		--startup-project ../Api
 
 clean:
 	docker compose -f docker/docker-compose.yml down -v
-	rm -rf node_modules apps/*/node_modules apps/api/dist
+	rm -rf node_modules apps/*/node_modules $(API_DIR)/dist
 ```
 
 ### 1.7 — Linting & Formatting
